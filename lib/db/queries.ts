@@ -1,5 +1,7 @@
 import "server-only";
 
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import {
   and,
   asc,
@@ -16,6 +18,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type { ArtifactKind } from "@/components/artifact";
 import type { VisibilityType } from "@/components/visibility-selector";
+import { logger } from "@/otel-server";
 import { ChatSDKError } from "../errors";
 import type { AppUsage } from "../usage";
 import { generateUUID } from "../utils";
@@ -41,6 +44,81 @@ import { generateHashedPassword } from "./utils";
 // biome-ignore lint: Forbidden non-null assertion.
 const client = postgres(process.env.POSTGRES_URL!);
 const db = drizzle(client);
+
+// Helper function to instrument database operations
+async function instrumentedDbOperation<T>(
+  operationName: string,
+  operation: () => Promise<T>,
+  attributes: Record<string, any> = {}
+): Promise<T> {
+  const tracer = trace.getTracer("database");
+
+  return tracer.startActiveSpan(`db.${operationName}`, async (span) => {
+    const startTime = Date.now();
+
+    try {
+      span.setAttributes({
+        "db.system": "postgresql",
+        "db.operation": operationName,
+        ...attributes,
+      });
+
+      logger.emit({
+        severityNumber: SeverityNumber.DEBUG,
+        severityText: "DEBUG",
+        body: `Database operation started: ${operationName}`,
+        attributes: {
+          "db.operation": operationName,
+          ...attributes,
+        },
+      });
+
+      const result = await operation();
+      const duration = Date.now() - startTime;
+
+      span.setAttributes({
+        "db.duration_ms": duration,
+      });
+      span.setStatus({ code: SpanStatusCode.OK });
+
+      logger.emit({
+        severityNumber: SeverityNumber.DEBUG,
+        severityText: "DEBUG",
+        body: `Database operation completed: ${operationName}`,
+        attributes: {
+          "db.operation": operationName,
+          "db.duration_ms": duration,
+          ...attributes,
+        },
+      });
+
+      return result;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: (error as Error).message,
+      });
+      span.recordException(error as Error);
+
+      logger.emit({
+        severityNumber: SeverityNumber.ERROR,
+        severityText: "ERROR",
+        body: `Database operation failed: ${operationName}`,
+        attributes: {
+          "db.operation": operationName,
+          "db.duration_ms": duration,
+          "error.message": (error as Error).message,
+          ...attributes,
+        },
+      });
+
+      throw error;
+    } finally {
+      span.end();
+    }
+  });
+}
 
 export async function getUser(email: string): Promise<User[]> {
   try {
@@ -91,17 +169,23 @@ export async function saveChat({
   title: string;
   visibility: VisibilityType;
 }) {
-  try {
-    return await db.insert(chat).values({
-      id,
-      createdAt: new Date(),
-      userId,
-      title,
-      visibility,
-    });
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save chat");
-  }
+  return instrumentedDbOperation(
+    "saveChat",
+    async () => {
+      try {
+        return await db.insert(chat).values({
+          id,
+          createdAt: new Date(),
+          userId,
+          title,
+          visibility,
+        });
+      } catch (_error) {
+        throw new ChatSDKError("bad_request:database", "Failed to save chat");
+      }
+    },
+    { "chat.id": id, "user.id": userId, "chat.visibility": visibility }
+  );
 }
 
 export async function deleteChatById({ id }: { id: string }) {
@@ -200,39 +284,66 @@ export async function getChatsByUserId({
 }
 
 export async function getChatById({ id }: { id: string }) {
-  try {
-    const [selectedChat] = await db.select().from(chat).where(eq(chat.id, id));
-    if (!selectedChat) {
-      return null;
-    }
+  return instrumentedDbOperation(
+    "getChatById",
+    async () => {
+      try {
+        const [selectedChat] = await db
+          .select()
+          .from(chat)
+          .where(eq(chat.id, id));
+        if (!selectedChat) {
+          return null;
+        }
 
-    return selectedChat;
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to get chat by id");
-  }
+        return selectedChat;
+      } catch (_error) {
+        throw new ChatSDKError(
+          "bad_request:database",
+          "Failed to get chat by id"
+        );
+      }
+    },
+    { "chat.id": id }
+  );
 }
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
-  try {
-    return await db.insert(message).values(messages);
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save messages");
-  }
+  return instrumentedDbOperation(
+    "saveMessages",
+    async () => {
+      try {
+        return await db.insert(message).values(messages);
+      } catch (_error) {
+        throw new ChatSDKError(
+          "bad_request:database",
+          "Failed to save messages"
+        );
+      }
+    },
+    { "messages.count": messages.length }
+  );
 }
 
 export async function getMessagesByChatId({ id }: { id: string }) {
-  try {
-    return await db
-      .select()
-      .from(message)
-      .where(eq(message.chatId, id))
-      .orderBy(asc(message.createdAt));
-  } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get messages by chat id"
-    );
-  }
+  return instrumentedDbOperation(
+    "getMessagesByChatId",
+    async () => {
+      try {
+        return await db
+          .select()
+          .from(message)
+          .where(eq(message.chatId, id))
+          .orderBy(asc(message.createdAt));
+      } catch (_error) {
+        throw new ChatSDKError(
+          "bad_request:database",
+          "Failed to get messages by chat id"
+        );
+      }
+    },
+    { "chat.id": id }
+  );
 }
 
 export async function voteMessage({
