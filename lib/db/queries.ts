@@ -17,6 +17,7 @@ import postgres from "postgres";
 import type { ArtifactKind } from "@/components/artifact";
 import type { VisibilityType } from "@/components/visibility-selector";
 import { ChatSDKError } from "../errors";
+import { withSpan } from "../otel-utils";
 import type { AppUsage } from "../usage";
 import { generateUUID } from "../utils";
 import {
@@ -43,14 +44,22 @@ const client = postgres(process.env.POSTGRES_URL!);
 const db = drizzle(client);
 
 export async function getUser(email: string): Promise<User[]> {
-  try {
-    return await db.select().from(user).where(eq(user.email, email));
-  } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get user by email"
-    );
-  }
+  return withSpan("db.getUser", async (span) => {
+    span.setAttributes({
+      "db.operation": "select",
+      "db.table": "user",
+      "user.email": email,
+    });
+
+    try {
+      return await db.select().from(user).where(eq(user.email, email));
+    } catch (_error) {
+      throw new ChatSDKError(
+        "bad_request:database",
+        "Failed to get user by email"
+      );
+    }
+  });
 }
 
 export async function createUser(email: string, password: string) {
@@ -91,17 +100,27 @@ export async function saveChat({
   title: string;
   visibility: VisibilityType;
 }) {
-  try {
-    return await db.insert(chat).values({
-      id,
-      createdAt: new Date(),
-      userId,
-      title,
-      visibility,
+  return withSpan("db.saveChat", async (span) => {
+    span.setAttributes({
+      "db.operation": "insert",
+      "db.table": "chat",
+      "chat.id": id,
+      "chat.userId": userId,
+      "chat.visibility": visibility,
     });
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save chat");
-  }
+
+    try {
+      return await db.insert(chat).values({
+        id,
+        createdAt: new Date(),
+        userId,
+        title,
+        visibility,
+      });
+    } catch (_error) {
+      throw new ChatSDKError("bad_request:database", "Failed to save chat");
+    }
+  });
 }
 
 export async function deleteChatById({ id }: { id: string }) {
@@ -213,11 +232,19 @@ export async function getChatById({ id }: { id: string }) {
 }
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
-  try {
-    return await db.insert(message).values(messages);
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save messages");
-  }
+  return withSpan("db.saveMessages", async (span) => {
+    span.setAttributes({
+      "db.operation": "insert",
+      "db.table": "message",
+      "message.count": messages.length,
+    });
+
+    try {
+      return await db.insert(message).values(messages);
+    } catch (_error) {
+      throw new ChatSDKError("bad_request:database", "Failed to save messages");
+    }
+  });
 }
 
 export async function getMessagesByChatId({ id }: { id: string }) {

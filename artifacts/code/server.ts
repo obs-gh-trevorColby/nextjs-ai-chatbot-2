@@ -3,41 +3,49 @@ import { z } from "zod";
 import { codePrompt, updateDocumentPrompt } from "@/lib/ai/prompts";
 import { myProvider } from "@/lib/ai/providers";
 import { createDocumentHandler } from "@/lib/artifacts/server";
+import { withSpan } from "@/lib/otel-utils";
 
 export const codeDocumentHandler = createDocumentHandler<"code">({
   kind: "code",
   onCreateDocument: async ({ title, dataStream }) => {
-    let draftContent = "";
+    return withSpan("ai.artifact.createCode", async (span) => {
+      span.setAttributes({
+        "artifact.type": "code",
+        "artifact.title": title,
+      });
 
-    const { fullStream } = streamObject({
-      model: myProvider.languageModel("artifact-model"),
-      system: codePrompt,
-      prompt: title,
-      schema: z.object({
-        code: z.string(),
-      }),
-    });
+      let draftContent = "";
 
-    for await (const delta of fullStream) {
-      const { type } = delta;
+      const { fullStream } = streamObject({
+        model: myProvider.languageModel("artifact-model"),
+        system: codePrompt,
+        prompt: title,
+        schema: z.object({
+          code: z.string(),
+        }),
+      });
 
-      if (type === "object") {
-        const { object } = delta;
-        const { code } = object;
+      for await (const delta of fullStream) {
+        const { type } = delta;
 
-        if (code) {
-          dataStream.write({
-            type: "data-codeDelta",
-            data: code ?? "",
-            transient: true,
-          });
+        if (type === "object") {
+          const { object } = delta;
+          const { code } = object;
 
-          draftContent = code;
+          if (code) {
+            dataStream.write({
+              type: "data-codeDelta",
+              data: code ?? "",
+              transient: true,
+            });
+
+            draftContent = code;
+          }
         }
       }
-    }
 
-    return draftContent;
+      return draftContent;
+    });
   },
   onUpdateDocument: async ({ document, description, dataStream }) => {
     let draftContent = "";

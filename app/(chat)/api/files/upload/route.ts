@@ -3,6 +3,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { auth } from "@/app/(auth)/auth";
+import {
+  getUserAttributes,
+  logApiRequest,
+  logApiResponse,
+  withSpan,
+} from "@/lib/otel-utils";
 
 // Use Blob instead of File since File is not available in Node.js environment
 const FileSchema = z.object({
@@ -18,51 +24,124 @@ const FileSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const session = await auth();
+  const startTime = Date.now();
 
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  return withSpan(
+    "files.upload",
+    async (span) => {
+      const session = await auth();
 
-  if (request.body === null) {
-    return new Response("Request body is empty", { status: 400 });
-  }
+      logApiRequest("POST", "/api/files/upload");
 
-  try {
-    const formData = await request.formData();
-    const file = formData.get("file") as Blob;
+      if (!session) {
+        logApiResponse(
+          "POST",
+          "/api/files/upload",
+          401,
+          Date.now() - startTime
+        );
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
 
-    if (!file) {
-      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+      if (request.body === null) {
+        logApiResponse(
+          "POST",
+          "/api/files/upload",
+          400,
+          Date.now() - startTime,
+          session.user?.id
+        );
+        return new Response("Request body is empty", { status: 400 });
+      }
+
+      const userAttributes = getUserAttributes(session);
+      span.setAttributes(userAttributes);
+
+      try {
+        const formData = await request.formData();
+        const file = formData.get("file") as Blob;
+
+        if (!file) {
+          logApiResponse(
+            "POST",
+            "/api/files/upload",
+            400,
+            Date.now() - startTime,
+            session.user?.id
+          );
+          return NextResponse.json(
+            { error: "No file uploaded" },
+            { status: 400 }
+          );
+        }
+
+        const validatedFile = FileSchema.safeParse({ file });
+
+        if (!validatedFile.success) {
+          const errorMessage = validatedFile.error.errors
+            .map((error) => error.message)
+            .join(", ");
+
+          logApiResponse(
+            "POST",
+            "/api/files/upload",
+            400,
+            Date.now() - startTime,
+            session.user?.id
+          );
+          return NextResponse.json({ error: errorMessage }, { status: 400 });
+        }
+
+        // Get filename from formData since Blob doesn't have name property
+        const filename = (formData.get("file") as File).name;
+        const fileBuffer = await file.arrayBuffer();
+
+        span.setAttributes({
+          "file.name": filename,
+          "file.size": file.size,
+          "file.type": file.type,
+        });
+
+        try {
+          const data = await put(`${filename}`, fileBuffer, {
+            access: "public",
+          });
+
+          logApiResponse(
+            "POST",
+            "/api/files/upload",
+            200,
+            Date.now() - startTime,
+            session.user?.id
+          );
+          return NextResponse.json(data);
+        } catch (_error) {
+          logApiResponse(
+            "POST",
+            "/api/files/upload",
+            500,
+            Date.now() - startTime,
+            session.user?.id
+          );
+          return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+        }
+      } catch (_error) {
+        logApiResponse(
+          "POST",
+          "/api/files/upload",
+          500,
+          Date.now() - startTime,
+          session.user?.id
+        );
+        return NextResponse.json(
+          { error: "Failed to process request" },
+          { status: 500 }
+        );
+      }
+    },
+    {
+      "http.method": "POST",
+      "http.route": "/api/files/upload",
     }
-
-    const validatedFile = FileSchema.safeParse({ file });
-
-    if (!validatedFile.success) {
-      const errorMessage = validatedFile.error.errors
-        .map((error) => error.message)
-        .join(", ");
-
-      return NextResponse.json({ error: errorMessage }, { status: 400 });
-    }
-
-    // Get filename from formData since Blob doesn't have name property
-    const filename = (formData.get("file") as File).name;
-    const fileBuffer = await file.arrayBuffer();
-
-    try {
-      const data = await put(`${filename}`, fileBuffer, {
-        access: "public",
-      });
-
-      return NextResponse.json(data);
-    } catch (_error) {
-      return NextResponse.json({ error: "Upload failed" }, { status: 500 });
-    }
-  } catch (_error) {
-    return NextResponse.json(
-      { error: "Failed to process request" },
-      { status: 500 }
-    );
-  }
+  );
 }

@@ -6,82 +6,174 @@ import {
   saveDocument,
 } from "@/lib/db/queries";
 import { ChatSDKError } from "@/lib/errors";
+import {
+  getUserAttributes,
+  logApiRequest,
+  logApiResponse,
+  withSpan,
+} from "@/lib/otel-utils";
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get("id");
+  const startTime = Date.now();
 
-  if (!id) {
-    return new ChatSDKError(
-      "bad_request:api",
-      "Parameter id is missing"
-    ).toResponse();
-  }
+  return withSpan(
+    "document.get",
+    async (span) => {
+      const { searchParams } = new URL(request.url);
+      const id = searchParams.get("id");
 
-  const session = await auth();
+      logApiRequest("GET", "/api/document", undefined, { documentId: id });
 
-  if (!session?.user) {
-    return new ChatSDKError("unauthorized:document").toResponse();
-  }
+      if (!id) {
+        const error = new ChatSDKError(
+          "bad_request:api",
+          "Parameter id is missing"
+        );
+        logApiResponse("GET", "/api/document", 400, Date.now() - startTime);
+        return error.toResponse();
+      }
 
-  const documents = await getDocumentsById({ id });
+      const session = await auth();
 
-  const [document] = documents;
+      if (!session?.user) {
+        const error = new ChatSDKError("unauthorized:document");
+        logApiResponse("GET", "/api/document", 401, Date.now() - startTime);
+        return error.toResponse();
+      }
 
-  if (!document) {
-    return new ChatSDKError("not_found:document").toResponse();
-  }
+      const userAttributes = getUserAttributes(session);
+      span.setAttributes({
+        "document.id": id,
+        ...userAttributes,
+      });
 
-  if (document.userId !== session.user.id) {
-    return new ChatSDKError("forbidden:document").toResponse();
-  }
+      const documents = await getDocumentsById({ id });
 
-  return Response.json(documents, { status: 200 });
+      const [document] = documents;
+
+      if (!document) {
+        const error = new ChatSDKError("not_found:document");
+        logApiResponse(
+          "GET",
+          "/api/document",
+          404,
+          Date.now() - startTime,
+          session.user.id
+        );
+        return error.toResponse();
+      }
+
+      if (document.userId !== session.user.id) {
+        const error = new ChatSDKError("forbidden:document");
+        logApiResponse(
+          "GET",
+          "/api/document",
+          403,
+          Date.now() - startTime,
+          session.user.id
+        );
+        return error.toResponse();
+      }
+
+      logApiResponse(
+        "GET",
+        "/api/document",
+        200,
+        Date.now() - startTime,
+        session.user.id
+      );
+      return Response.json(documents, { status: 200 });
+    },
+    {
+      "http.method": "GET",
+      "http.route": "/api/document",
+    }
+  );
 }
 
 export async function POST(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get("id");
+  const startTime = Date.now();
 
-  if (!id) {
-    return new ChatSDKError(
-      "bad_request:api",
-      "Parameter id is required."
-    ).toResponse();
-  }
+  return withSpan(
+    "document.post",
+    async (span) => {
+      const { searchParams } = new URL(request.url);
+      const id = searchParams.get("id");
 
-  const session = await auth();
+      logApiRequest("POST", "/api/document", undefined, { documentId: id });
 
-  if (!session?.user) {
-    return new ChatSDKError("not_found:document").toResponse();
-  }
+      if (!id) {
+        const error = new ChatSDKError(
+          "bad_request:api",
+          "Parameter id is required."
+        );
+        logApiResponse("POST", "/api/document", 400, Date.now() - startTime);
+        return error.toResponse();
+      }
 
-  const {
-    content,
-    title,
-    kind,
-  }: { content: string; title: string; kind: ArtifactKind } =
-    await request.json();
+      const session = await auth();
 
-  const documents = await getDocumentsById({ id });
+      if (!session?.user) {
+        const error = new ChatSDKError("not_found:document");
+        logApiResponse("POST", "/api/document", 404, Date.now() - startTime);
+        return error.toResponse();
+      }
 
-  if (documents.length > 0) {
-    const [doc] = documents;
+      const {
+        content,
+        title,
+        kind,
+      }: { content: string; title: string; kind: ArtifactKind } =
+        await request.json();
 
-    if (doc.userId !== session.user.id) {
-      return new ChatSDKError("forbidden:document").toResponse();
+      const userAttributes = getUserAttributes(session);
+      span.setAttributes({
+        "document.id": id,
+        "document.kind": kind,
+        "document.title": title,
+        ...userAttributes,
+      });
+
+      const documents = await getDocumentsById({ id });
+
+      if (documents.length > 0) {
+        const [doc] = documents;
+
+        if (doc.userId !== session.user.id) {
+          const error = new ChatSDKError("forbidden:document");
+          logApiResponse(
+            "POST",
+            "/api/document",
+            403,
+            Date.now() - startTime,
+            session.user.id
+          );
+          return error.toResponse();
+        }
+      }
+
+      const document = await saveDocument({
+        id,
+        content,
+        title,
+        kind,
+        userId: session.user.id,
+      });
+
+      logApiResponse(
+        "POST",
+        "/api/document",
+        200,
+        Date.now() - startTime,
+        session.user.id
+      );
+      return Response.json(document, { status: 200 });
+    },
+    {
+      "http.method": "POST",
+      "http.route": "/api/document",
     }
-  }
-
-  const document = await saveDocument({
-    id,
-    content,
-    title,
-    kind,
-    userId: session.user.id,
-  });
-
-  return Response.json(document, { status: 200 });
+  );
 }
 
 export async function DELETE(request: Request) {
