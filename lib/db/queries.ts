@@ -1,5 +1,7 @@
 import "server-only";
 
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import {
   and,
   asc,
@@ -43,14 +45,39 @@ const client = postgres(process.env.POSTGRES_URL!);
 const db = drizzle(client);
 
 export async function getUser(email: string): Promise<User[]> {
-  try {
-    return await db.select().from(user).where(eq(user.email, email));
-  } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get user by email"
-    );
-  }
+  const tracer = trace.getTracer("ai-chatbot");
+
+  return tracer.startActiveSpan("db.getUser", async (span) => {
+    try {
+      span.setAttributes({
+        "db.operation": "select",
+        "db.table": "user",
+        "user.email": email,
+      });
+
+      const result = await db.select().from(user).where(eq(user.email, email));
+
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.setAttributes({
+        "db.result.count": result.length,
+      });
+
+      return result;
+    } catch (error) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: (error as Error).message,
+      });
+      span.recordException(error as Error);
+
+      throw new ChatSDKError(
+        "bad_request:database",
+        "Failed to get user by email"
+      );
+    } finally {
+      span.end();
+    }
+  });
 }
 
 export async function createUser(email: string, password: string) {
@@ -213,26 +240,74 @@ export async function getChatById({ id }: { id: string }) {
 }
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
-  try {
-    return await db.insert(message).values(messages);
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save messages");
-  }
+  const tracer = trace.getTracer("ai-chatbot");
+
+  return tracer.startActiveSpan("db.saveMessages", async (span) => {
+    try {
+      span.setAttributes({
+        "db.operation": "insert",
+        "db.table": "message",
+        "messages.count": messages.length,
+        "chat.id": messages[0]?.chatId || "unknown",
+      });
+
+      const result = await db.insert(message).values(messages);
+
+      span.setStatus({ code: SpanStatusCode.OK });
+
+      return result;
+    } catch (error) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: (error as Error).message,
+      });
+      span.recordException(error as Error);
+
+      throw new ChatSDKError("bad_request:database", "Failed to save messages");
+    } finally {
+      span.end();
+    }
+  });
 }
 
 export async function getMessagesByChatId({ id }: { id: string }) {
-  try {
-    return await db
-      .select()
-      .from(message)
-      .where(eq(message.chatId, id))
-      .orderBy(asc(message.createdAt));
-  } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get messages by chat id"
-    );
-  }
+  const tracer = trace.getTracer("ai-chatbot");
+
+  return tracer.startActiveSpan("db.getMessagesByChatId", async (span) => {
+    try {
+      span.setAttributes({
+        "db.operation": "select",
+        "db.table": "message",
+        "chat.id": id,
+      });
+
+      const result = await db
+        .select()
+        .from(message)
+        .where(eq(message.chatId, id))
+        .orderBy(asc(message.createdAt));
+
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.setAttributes({
+        "db.result.count": result.length,
+      });
+
+      return result;
+    } catch (error) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: (error as Error).message,
+      });
+      span.recordException(error as Error);
+
+      throw new ChatSDKError(
+        "bad_request:database",
+        "Failed to get messages by chat id"
+      );
+    } finally {
+      span.end();
+    }
+  });
 }
 
 export async function voteMessage({
