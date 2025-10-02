@@ -1,5 +1,7 @@
 import "server-only";
 
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import {
   and,
   asc,
@@ -17,6 +19,7 @@ import postgres from "postgres";
 import type { ArtifactKind } from "@/components/artifact";
 import type { VisibilityType } from "@/components/visibility-selector";
 import { ChatSDKError } from "../errors";
+import { logger } from "../otel-server";
 import type { AppUsage } from "../usage";
 import { generateUUID } from "../utils";
 import {
@@ -41,6 +44,8 @@ import { generateHashedPassword } from "./utils";
 // biome-ignore lint: Forbidden non-null assertion.
 const client = postgres(process.env.POSTGRES_URL!);
 const db = drizzle(client);
+
+const tracer = trace.getTracer("ai-chatbot-db");
 
 export async function getUser(email: string): Promise<User[]> {
   try {
@@ -200,24 +205,121 @@ export async function getChatsByUserId({
 }
 
 export async function getChatById({ id }: { id: string }) {
-  try {
-    const [selectedChat] = await db.select().from(chat).where(eq(chat.id, id));
-    if (!selectedChat) {
-      return null;
-    }
+  return tracer.startActiveSpan("db.getChatById", async (span) => {
+    try {
+      span.setAttributes({
+        "db.operation": "select",
+        "db.table": "chat",
+        "chat.id": id,
+      });
 
-    return selectedChat;
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to get chat by id");
-  }
+      const [selectedChat] = await db
+        .select()
+        .from(chat)
+        .where(eq(chat.id, id));
+
+      span.setAttributes({
+        "chat.found": !!selectedChat,
+      });
+
+      if (!selectedChat) {
+        span.setStatus({ code: SpanStatusCode.OK });
+        logger.emit({
+          severityNumber: SeverityNumber.DEBUG,
+          severityText: "DEBUG",
+          body: "Chat not found",
+          attributes: { chatId: id },
+        });
+        return null;
+      }
+
+      span.setStatus({ code: SpanStatusCode.OK });
+      logger.emit({
+        severityNumber: SeverityNumber.DEBUG,
+        severityText: "DEBUG",
+        body: "Chat retrieved successfully",
+        attributes: {
+          chatId: id,
+          userId: selectedChat.userId,
+        },
+      });
+
+      return selectedChat;
+    } catch (error) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: "Failed to get chat by id",
+      });
+      span.recordException(error as Error);
+
+      logger.emit({
+        severityNumber: SeverityNumber.ERROR,
+        severityText: "ERROR",
+        body: "Failed to get chat by id",
+        attributes: {
+          error: (error as Error).message,
+          chatId: id,
+        },
+      });
+
+      throw new ChatSDKError(
+        "bad_request:database",
+        "Failed to get chat by id"
+      );
+    } finally {
+      span.end();
+    }
+  });
 }
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
-  try {
-    return await db.insert(message).values(messages);
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save messages");
-  }
+  return tracer.startActiveSpan("db.saveMessages", async (span) => {
+    try {
+      span.setAttributes({
+        "db.operation": "insert",
+        "db.table": "message",
+        "messages.count": messages.length,
+        "messages.chat_ids": [...new Set(messages.map((m) => m.chatId))].join(
+          ","
+        ),
+      });
+
+      logger.emit({
+        severityNumber: SeverityNumber.DEBUG,
+        severityText: "DEBUG",
+        body: "Saving messages to database",
+        attributes: {
+          messagesCount: messages.length,
+          chatIds: [...new Set(messages.map((m) => m.chatId))],
+        },
+      });
+
+      const result = await db.insert(message).values(messages);
+
+      span.setStatus({ code: SpanStatusCode.OK });
+      return result;
+    } catch (error) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: "Failed to save messages",
+      });
+      span.recordException(error as Error);
+
+      logger.emit({
+        severityNumber: SeverityNumber.ERROR,
+        severityText: "ERROR",
+        body: "Failed to save messages to database",
+        attributes: {
+          error: (error as Error).message,
+          messagesCount: messages.length,
+        },
+      });
+
+      throw new ChatSDKError("bad_request:database", "Failed to save messages");
+    } finally {
+      span.end();
+    }
+  });
 }
 
 export async function getMessagesByChatId({ id }: { id: string }) {
