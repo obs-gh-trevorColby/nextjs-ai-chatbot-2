@@ -1,5 +1,6 @@
-import { registerOTel } from "@vercel/otel";
+import { initOtel } from "@/lib/otel-server";
 
 export function register() {
-  registerOTel({ serviceName: "ai-chatbot" });
+  // Initialize comprehensive OpenTelemetry instrumentation
+  initOtel();
 }
