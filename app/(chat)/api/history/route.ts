@@ -1,34 +1,87 @@
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import type { NextRequest } from "next/server";
 import { auth } from "@/app/(auth)/auth";
 import { getChatsByUserId } from "@/lib/db/queries";
 import { ChatSDKError } from "@/lib/errors";
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = request.nextUrl;
+const tracer = trace.getTracer("ai-chatbot-api");
+const logger = logs.getLogger("ai-chatbot-api");
 
-  const limit = Number.parseInt(searchParams.get("limit") || "10", 10);
-  const startingAfter = searchParams.get("starting_after");
-  const endingBefore = searchParams.get("ending_before");
+export function GET(request: NextRequest) {
+  return tracer.startActiveSpan("history.get", async (span) => {
+    const { searchParams } = request.nextUrl;
 
-  if (startingAfter && endingBefore) {
-    return new ChatSDKError(
-      "bad_request:api",
-      "Only one of starting_after or ending_before can be provided."
-    ).toResponse();
-  }
+    const limit = Number.parseInt(searchParams.get("limit") || "10", 10);
+    const startingAfter = searchParams.get("starting_after");
+    const endingBefore = searchParams.get("ending_before");
 
-  const session = await auth();
+    span.setAttributes({
+      "http.method": "GET",
+      "http.route": "/api/history",
+      "query.limit": limit,
+      "query.startingAfter": startingAfter || "none",
+      "query.endingBefore": endingBefore || "none",
+    });
 
-  if (!session?.user) {
-    return new ChatSDKError("unauthorized:chat").toResponse();
-  }
+    if (startingAfter && endingBefore) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: "Invalid pagination parameters",
+      });
+      logger.emit({
+        severityNumber: SeverityNumber.WARN,
+        severityText: "WARN",
+        body: "Invalid pagination parameters in history request",
+        attributes: { startingAfter, endingBefore },
+      });
+      return new ChatSDKError(
+        "bad_request:api",
+        "Only one of starting_after or ending_before can be provided."
+      ).toResponse();
+    }
 
-  const chats = await getChatsByUserId({
-    id: session.user.id,
-    limit,
-    startingAfter,
-    endingBefore,
+    const session = await auth();
+
+    if (!session?.user) {
+      span.setStatus({ code: SpanStatusCode.ERROR, message: "Unauthorized" });
+      return new ChatSDKError("unauthorized:chat").toResponse();
+    }
+
+    span.setAttributes({ "user.id": session.user.id });
+
+    const chats = await tracer.startActiveSpan(
+      "db.getChatsByUserId",
+      async (dbSpan) => {
+        dbSpan.setAttributes({
+          "db.operation": "getChatsByUserId",
+          "user.id": session.user.id,
+          "query.limit": limit,
+        });
+        return await getChatsByUserId({
+          id: session.user.id,
+          limit,
+          startingAfter,
+          endingBefore,
+        });
+      }
+    );
+
+    span.setAttributes({ "chats.count": chats.length });
+    span.setStatus({ code: SpanStatusCode.OK });
+
+    logger.emit({
+      severityNumber: SeverityNumber.INFO,
+      severityText: "INFO",
+      body: "Chat history retrieved successfully",
+      attributes: {
+        "user.id": session.user.id,
+        "chats.count": chats.length,
+        "query.limit": limit,
+      },
+    });
+
+    span.end();
+    return Response.json(chats);
   });
-
-  return Response.json(chats);
 }
