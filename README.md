@@ -68,3 +68,15 @@ pnpm dev
 ```
 
 Your app template should now be running on [localhost:3000](http://localhost:3000).
+
+## OpenTelemetry Setup Commands
+
+The following commands were executed to add OpenTelemetry observability dependencies to this project:
+
+```bash
+pnpm add -D typescript @types/node
+pnpm add @opentelemetry/auto-instrumentations-node @opentelemetry/exporter-logs-otlp-http @opentelemetry/exporter-metrics-otlp-proto @opentelemetry/exporter-trace-otlp-http @opentelemetry/resources @opentelemetry/sdk-logs @opentelemetry/sdk-metrics @opentelemetry/sdk-node @opentelemetry/semantic-conventions
+pnpm add @opentelemetry/instrumentation
+pnpm add @opentelemetry/instrumentation-document-load @opentelemetry/instrumentation-fetch @opentelemetry/instrumentation-xml-http-request @opentelemetry/sdk-trace-web
+pnpm install
+```
