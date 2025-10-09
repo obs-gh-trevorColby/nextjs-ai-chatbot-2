@@ -1,5 +1,7 @@
 import "server-only";
 
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import {
   and,
   asc,
@@ -41,6 +43,9 @@ import { generateHashedPassword } from "./utils";
 // biome-ignore lint: Forbidden non-null assertion.
 const client = postgres(process.env.POSTGRES_URL!);
 const db = drizzle(client);
+
+const tracer = trace.getTracer("ai-chatbot");
+const logger = logs.getLogger("ai-chatbot");
 
 export async function getUser(email: string): Promise<User[]> {
   try {
@@ -91,17 +96,56 @@ export async function saveChat({
   title: string;
   visibility: VisibilityType;
 }) {
-  try {
-    return await db.insert(chat).values({
-      id,
-      createdAt: new Date(),
-      userId,
-      title,
-      visibility,
-    });
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save chat");
-  }
+  return tracer.startActiveSpan("db.saveChat", async (span) => {
+    try {
+      span.setAttributes({
+        "db.operation": "insert",
+        "db.table": "chat",
+        "chat.id": id,
+        "user.id": userId,
+        "chat.visibility": visibility,
+      });
+
+      const result = await db.insert(chat).values({
+        id,
+        createdAt: new Date(),
+        userId,
+        title,
+        visibility,
+      });
+
+      span.setStatus({ code: SpanStatusCode.OK });
+      logger.emit({
+        severityNumber: SeverityNumber.INFO,
+        severityText: "INFO",
+        body: "Chat saved successfully",
+        attributes: { "chat.id": id, "user.id": userId },
+      });
+
+      return result;
+    } catch (error) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: "Failed to save chat",
+      });
+      span.recordException(error as Error);
+
+      logger.emit({
+        severityNumber: SeverityNumber.ERROR,
+        severityText: "ERROR",
+        body: "Failed to save chat",
+        attributes: {
+          error: (error as Error).message,
+          "chat.id": id,
+          "user.id": userId,
+        },
+      });
+
+      throw new ChatSDKError("bad_request:database", "Failed to save chat");
+    } finally {
+      span.end();
+    }
+  });
 }
 
 export async function deleteChatById({ id }: { id: string }) {
@@ -213,11 +257,56 @@ export async function getChatById({ id }: { id: string }) {
 }
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
-  try {
-    return await db.insert(message).values(messages);
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save messages");
-  }
+  return tracer.startActiveSpan("db.saveMessages", async (span) => {
+    try {
+      span.setAttributes({
+        "db.operation": "insert",
+        "db.table": "message",
+        "messages.count": messages.length,
+      });
+
+      if (messages.length > 0) {
+        span.setAttributes({
+          "chat.id": messages[0].chatId,
+        });
+      }
+
+      const result = await db.insert(message).values(messages);
+
+      span.setStatus({ code: SpanStatusCode.OK });
+      logger.emit({
+        severityNumber: SeverityNumber.INFO,
+        severityText: "INFO",
+        body: "Messages saved successfully",
+        attributes: {
+          "messages.count": messages.length,
+          "chat.id": messages.length > 0 ? messages[0].chatId : "unknown",
+        },
+      });
+
+      return result;
+    } catch (error) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: "Failed to save messages",
+      });
+      span.recordException(error as Error);
+
+      logger.emit({
+        severityNumber: SeverityNumber.ERROR,
+        severityText: "ERROR",
+        body: "Failed to save messages",
+        attributes: {
+          error: (error as Error).message,
+          "messages.count": messages.length,
+        },
+      });
+
+      throw new ChatSDKError("bad_request:database", "Failed to save messages");
+    } finally {
+      span.end();
+    }
+  });
 }
 
 export async function getMessagesByChatId({ id }: { id: string }) {
