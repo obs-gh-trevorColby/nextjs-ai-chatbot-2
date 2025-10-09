@@ -33,6 +33,10 @@
   - [Vercel Blob](https://vercel.com/storage/blob) for efficient file storage
 - [Auth.js](https://authjs.dev)
   - Simple and secure authentication
+- [OpenTelemetry](https://opentelemetry.io)
+  - Comprehensive observability with distributed tracing, metrics, and structured logging
+  - Automatic instrumentation for HTTP requests, database operations, and AI model usage
+  - OTLP exporters for integration with observability platforms
 
 ## Model Providers
 
@@ -68,3 +72,62 @@ pnpm dev
 ```
 
 Your app template should now be running on [localhost:3000](http://localhost:3000).
+
+## OpenTelemetry Observability
+
+This application includes comprehensive OpenTelemetry instrumentation for monitoring and observability:
+
+### Features
+
+- **Distributed Tracing**: Automatic tracing of HTTP requests, API routes, and database operations
+- **Metrics Collection**: Key performance indicators including request latency, throughput, error rates, and AI model usage
+- **Structured Logging**: Correlated logs with trace and span IDs for better debugging
+- **Automatic Instrumentation**: Zero-code instrumentation for popular Node.js libraries and frameworks
+
+### Configuration
+
+Set the following environment variables to configure OpenTelemetry:
+
+```bash
+# Server-side OpenTelemetry endpoint
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+
+# Optional: Bearer token for authentication
+OTEL_EXPORTER_OTLP_BEARER_TOKEN=your-token-here
+
+# Client-side OpenTelemetry endpoint (must be prefixed with NEXT_PUBLIC_)
+NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+
+# Optional: Client-side bearer token
+NEXT_PUBLIC_OTEL_EXPORTER_OTLP_BEARER_TOKEN=your-token-here
+```
+
+### Key Metrics
+
+The application automatically tracks:
+
+- `chat_requests_total`: Total number of chat requests by model and status
+- `chat_request_duration_ms`: Duration of chat requests in milliseconds
+- `messages_total`: Total number of messages processed by role
+- `db_operations_total`: Total database operations by type and status
+- `db_operation_duration_ms`: Database operation duration
+- `errors_total`: Total errors by type and operation
+
+### Integration
+
+The OpenTelemetry data is exported using OTLP (OpenTelemetry Protocol) and can be sent to any compatible observability platform such as:
+
+- [Observe](https://observeinc.com)
+- [Jaeger](https://jaegertracing.io)
+- [Zipkin](https://zipkin.io)
+- [Prometheus](https://prometheus.io) + [Grafana](https://grafana.com)
+- [New Relic](https://newrelic.com)
+- [Datadog](https://datadoghq.com)
+
+### Files Added
+
+- `otel-server.ts`: Server-side OpenTelemetry configuration
+- `otel-client.ts`: Client-side OpenTelemetry configuration
+- `lib/otel-utils.ts`: Utility functions for instrumentation
+- `lib/metrics.ts`: Custom metrics definitions
+- `components/otel-client-init.tsx`: Client-side initialization component
