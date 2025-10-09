@@ -1,5 +1,7 @@
 import "server-only";
 
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import {
   and,
   asc,
@@ -14,8 +16,6 @@ import {
 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { trace, SpanStatusCode } from "@opentelemetry/api";
-import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import type { ArtifactKind } from "@/components/artifact";
 import type { VisibilityType } from "@/components/visibility-selector";
 import { ChatSDKError } from "../errors";
@@ -124,7 +124,10 @@ export async function saveChat({
 
       return result;
     } catch (error) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: "Failed to save chat" });
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: "Failed to save chat",
+      });
       span.recordException(error as Error);
 
       logger.emit({
@@ -283,7 +286,10 @@ export async function saveMessages({ messages }: { messages: DBMessage[] }) {
 
       return result;
     } catch (error) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: "Failed to save messages" });
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: "Failed to save messages",
+      });
       span.recordException(error as Error);
 
       logger.emit({

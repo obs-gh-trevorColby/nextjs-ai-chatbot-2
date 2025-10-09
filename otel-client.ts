@@ -1,5 +1,5 @@
-import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import { metrics } from "@opentelemetry/api";
+import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-proto";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
@@ -12,7 +12,10 @@ import {
   BatchLogRecordProcessor,
   LoggerProvider,
 } from "@opentelemetry/sdk-logs";
-import { PeriodicExportingMetricReader, MeterProvider } from "@opentelemetry/sdk-metrics";
+import {
+  MeterProvider,
+  PeriodicExportingMetricReader,
+} from "@opentelemetry/sdk-metrics";
 import {
   SimpleSpanProcessor,
   WebTracerProvider,
@@ -25,8 +28,10 @@ const serviceName = "ai-chatbot-client"; // replace with your service name
 // Client side environment variables:
 // Next.js use process.env.NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT and process.env.NEXT_PUBLIC_OTEL_EXPORTER_OTLP_BEARER_TOKEN
 const otlpEndpoint =
-  process.env.NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT ?? "http://localhost:4318";
-const otlpEndpointBearerToken = process.env.NEXT_PUBLIC_OTEL_EXPORTER_OTLP_BEARER_TOKEN;
+  process.env.NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT ??
+  "http://localhost:4318";
+const otlpEndpointBearerToken =
+  process.env.NEXT_PUBLIC_OTEL_EXPORTER_OTLP_BEARER_TOKEN;
 
 const authHeader = otlpEndpointBearerToken
   ? { Authorization: `Bearer ${otlpEndpointBearerToken}` }
@@ -38,7 +43,7 @@ const resource = resourceFromAttributes({
 });
 
 const provider = new WebTracerProvider({
-  resource: resource,
+  resource,
   spanProcessors: [
     new SimpleSpanProcessor(
       new OTLPTraceExporter({
@@ -54,7 +59,7 @@ const provider = new WebTracerProvider({
 
 // Initialize Meter Provider
 const meterProvider = new MeterProvider({
-  resource: resource,
+  resource,
   readers: [
     new PeriodicExportingMetricReader({
       exporter: new OTLPMetricExporter({
@@ -71,7 +76,7 @@ const meterProvider = new MeterProvider({
 
 // Initialize Logger Provider
 const loggerProvider = new LoggerProvider({
-  resource: resource,
+  resource,
   processors: [
     new BatchLogRecordProcessor(
       new OTLPLogExporter({

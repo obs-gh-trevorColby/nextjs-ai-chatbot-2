@@ -1,3 +1,5 @@
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import { geolocation } from "@vercel/functions";
 import {
   convertToModelMessages,
@@ -16,8 +18,6 @@ import {
 import type { ModelCatalog } from "tokenlens/core";
 import { fetchModels } from "tokenlens/fetch";
 import { getUsage } from "tokenlens/helpers";
-import { trace, context, SpanStatusCode } from "@opentelemetry/api";
-import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import { auth, type UserType } from "@/app/(auth)/auth";
 import type { VisibilityType } from "@/components/visibility-selector";
 import { entitlementsByUserType } from "@/lib/ai/entitlements";
@@ -113,7 +113,10 @@ export async function POST(request: Request) {
       const json = await request.json();
       requestBody = postRequestBodySchema.parse(json);
     } catch (error) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: "Invalid request body" });
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: "Invalid request body",
+      });
       span.recordException(error as Error);
 
       logger.emit({
@@ -126,243 +129,255 @@ export async function POST(request: Request) {
       return new ChatSDKError("bad_request:api").toResponse();
     }
 
-  try {
-    const {
-      id,
-      message,
-      selectedChatModel,
-      selectedVisibilityType,
-    }: {
-      id: string;
-      message: ChatMessage;
-      selectedChatModel: ChatModel["id"];
-      selectedVisibilityType: VisibilityType;
-    } = requestBody;
-
-    const session = await auth();
-
-    if (!session?.user) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: "Unauthorized" });
-      return new ChatSDKError("unauthorized:chat").toResponse();
-    }
-
-    const userType: UserType = session.user.type;
-
-    span.setAttributes({
-      "user.id": session.user.id,
-      "user.type": userType,
-      "chat.id": id,
-      "chat.model": selectedChatModel,
-      "chat.visibility": selectedVisibilityType,
-    });
-
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 24,
-    });
-
-    span.setAttributes({ "user.messageCount": messageCount });
-
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: "Rate limit exceeded" });
-      logger.emit({
-        severityNumber: SeverityNumber.WARN,
-        severityText: "WARN",
-        body: "Rate limit exceeded",
-        attributes: {
-          "user.id": session.user.id,
-          "user.messageCount": messageCount,
-          "user.maxMessages": entitlementsByUserType[userType].maxMessagesPerDay,
-        },
-      });
-      return new ChatSDKError("rate_limit:chat").toResponse();
-    }
-
-    const chat = await getChatById({ id });
-
-    if (chat) {
-      if (chat.userId !== session.user.id) {
-        return new ChatSDKError("forbidden:chat").toResponse();
-      }
-    } else {
-      const title = await generateTitleFromUserMessage({
-        message,
-      });
-
-      await saveChat({
+    try {
+      const {
         id,
-        userId: session.user.id,
-        title,
-        visibility: selectedVisibilityType,
-      });
-    }
+        message,
+        selectedChatModel,
+        selectedVisibilityType,
+      }: {
+        id: string;
+        message: ChatMessage;
+        selectedChatModel: ChatModel["id"];
+        selectedVisibilityType: VisibilityType;
+      } = requestBody;
 
-    const messagesFromDb = await getMessagesByChatId({ id });
-    const uiMessages = [...convertToUIMessages(messagesFromDb), message];
+      const session = await auth();
 
-    const { longitude, latitude, city, country } = geolocation(request);
+      if (!session?.user) {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: "Unauthorized" });
+        return new ChatSDKError("unauthorized:chat").toResponse();
+      }
 
-    const requestHints: RequestHints = {
-      longitude,
-      latitude,
-      city,
-      country,
-    };
+      const userType: UserType = session.user.type;
 
-    await saveMessages({
-      messages: [
-        {
-          chatId: id,
-          id: message.id,
-          role: "user",
-          parts: message.parts,
-          attachments: [],
-          createdAt: new Date(),
-        },
-      ],
-    });
-
-    const streamId = generateUUID();
-    await createStreamId({ streamId, chatId: id });
-
-    let finalMergedUsage: AppUsage | undefined;
-
-    logger.emit({
-      severityNumber: SeverityNumber.INFO,
-      severityText: "INFO",
-      body: "Starting AI stream",
-      attributes: {
+      span.setAttributes({
+        "user.id": session.user.id,
+        "user.type": userType,
         "chat.id": id,
         "chat.model": selectedChatModel,
-        "user.id": session.user.id,
-        "messages.count": uiMessages.length,
-      },
-    });
+        "chat.visibility": selectedVisibilityType,
+      });
 
-    const stream = createUIMessageStream({
-      execute: ({ writer: dataStream }) => {
-        return tracer.startActiveSpan("ai.stream", (aiSpan) => {
-          aiSpan.setAttributes({
-            "ai.model": selectedChatModel,
-            "ai.messages.count": uiMessages.length,
+      const messageCount = await getMessageCountByUserId({
+        id: session.user.id,
+        differenceInHours: 24,
+      });
+
+      span.setAttributes({ "user.messageCount": messageCount });
+
+      if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: "Rate limit exceeded",
+        });
+        logger.emit({
+          severityNumber: SeverityNumber.WARN,
+          severityText: "WARN",
+          body: "Rate limit exceeded",
+          attributes: {
+            "user.id": session.user.id,
+            "user.messageCount": messageCount,
+            "user.maxMessages":
+              entitlementsByUserType[userType].maxMessagesPerDay,
+          },
+        });
+        return new ChatSDKError("rate_limit:chat").toResponse();
+      }
+
+      const chat = await getChatById({ id });
+
+      if (chat) {
+        if (chat.userId !== session.user.id) {
+          return new ChatSDKError("forbidden:chat").toResponse();
+        }
+      } else {
+        const title = await generateTitleFromUserMessage({
+          message,
+        });
+
+        await saveChat({
+          id,
+          userId: session.user.id,
+          title,
+          visibility: selectedVisibilityType,
+        });
+      }
+
+      const messagesFromDb = await getMessagesByChatId({ id });
+      const uiMessages = [...convertToUIMessages(messagesFromDb), message];
+
+      const { longitude, latitude, city, country } = geolocation(request);
+
+      const requestHints: RequestHints = {
+        longitude,
+        latitude,
+        city,
+        country,
+      };
+
+      await saveMessages({
+        messages: [
+          {
+            chatId: id,
+            id: message.id,
+            role: "user",
+            parts: message.parts,
+            attachments: [],
+            createdAt: new Date(),
+          },
+        ],
+      });
+
+      const streamId = generateUUID();
+      await createStreamId({ streamId, chatId: id });
+
+      let finalMergedUsage: AppUsage | undefined;
+
+      logger.emit({
+        severityNumber: SeverityNumber.INFO,
+        severityText: "INFO",
+        body: "Starting AI stream",
+        attributes: {
+          "chat.id": id,
+          "chat.model": selectedChatModel,
+          "user.id": session.user.id,
+          "messages.count": uiMessages.length,
+        },
+      });
+
+      const stream = createUIMessageStream({
+        execute: ({ writer: dataStream }) => {
+          tracer.startActiveSpan("ai.stream", (aiSpan) => {
+            aiSpan.setAttributes({
+              "ai.model": selectedChatModel,
+              "ai.messages.count": uiMessages.length,
+            });
+
+            const result = streamText({
+              model: myProvider.languageModel(selectedChatModel),
+              system: systemPrompt({ selectedChatModel, requestHints }),
+              messages: convertToModelMessages(uiMessages),
+              stopWhen: stepCountIs(5),
+              experimental_activeTools:
+                selectedChatModel === "chat-model-reasoning"
+                  ? []
+                  : [
+                      "getWeather",
+                      "createDocument",
+                      "updateDocument",
+                      "requestSuggestions",
+                    ],
+              experimental_transform: smoothStream({ chunking: "word" }),
+              tools: {
+                getWeather,
+                createDocument: createDocument({ session, dataStream }),
+                updateDocument: updateDocument({ session, dataStream }),
+                requestSuggestions: requestSuggestions({
+                  session,
+                  dataStream,
+                }),
+              },
+              experimental_telemetry: {
+                isEnabled: isProductionEnvironment,
+                functionId: "stream-text",
+              },
+              onFinish: async ({ usage }) => {
+                try {
+                  const providers = await getTokenlensCatalog();
+                  const modelId =
+                    myProvider.languageModel(selectedChatModel).modelId;
+                  if (!modelId) {
+                    finalMergedUsage = usage;
+                    dataStream.write({
+                      type: "data-usage",
+                      data: finalMergedUsage,
+                    });
+                    return;
+                  }
+
+                  if (!providers) {
+                    finalMergedUsage = usage;
+                    dataStream.write({
+                      type: "data-usage",
+                      data: finalMergedUsage,
+                    });
+                    return;
+                  }
+
+                  const summary = getUsage({ modelId, usage, providers });
+                  finalMergedUsage = {
+                    ...usage,
+                    ...summary,
+                    modelId,
+                  } as AppUsage;
+                  dataStream.write({
+                    type: "data-usage",
+                    data: finalMergedUsage,
+                  });
+                } catch (err) {
+                  console.warn("TokenLens enrichment failed", err);
+                  finalMergedUsage = usage;
+                  dataStream.write({
+                    type: "data-usage",
+                    data: finalMergedUsage,
+                  });
+                }
+              },
+            });
+
+            result.consumeStream();
+
+            dataStream.merge(
+              result.toUIMessageStream({
+                sendReasoning: true,
+              })
+            );
+
+            aiSpan.setStatus({ code: SpanStatusCode.OK });
+            aiSpan.end();
+          });
+        },
+        generateId: generateUUID,
+        onFinish: async ({ messages }) => {
+          await saveMessages({
+            messages: messages.map((currentMessage) => ({
+              id: currentMessage.id,
+              role: currentMessage.role,
+              parts: currentMessage.parts,
+              createdAt: new Date(),
+              attachments: [],
+              chatId: id,
+            })),
           });
 
-          const result = streamText({
-          model: myProvider.languageModel(selectedChatModel),
-          system: systemPrompt({ selectedChatModel, requestHints }),
-          messages: convertToModelMessages(uiMessages),
-          stopWhen: stepCountIs(5),
-          experimental_activeTools:
-            selectedChatModel === "chat-model-reasoning"
-              ? []
-              : [
-                  "getWeather",
-                  "createDocument",
-                  "updateDocument",
-                  "requestSuggestions",
-                ],
-          experimental_transform: smoothStream({ chunking: "word" }),
-          tools: {
-            getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-            }),
-          },
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: "stream-text",
-          },
-          onFinish: async ({ usage }) => {
+          if (finalMergedUsage) {
             try {
-              const providers = await getTokenlensCatalog();
-              const modelId =
-                myProvider.languageModel(selectedChatModel).modelId;
-              if (!modelId) {
-                finalMergedUsage = usage;
-                dataStream.write({
-                  type: "data-usage",
-                  data: finalMergedUsage,
-                });
-                return;
-              }
-
-              if (!providers) {
-                finalMergedUsage = usage;
-                dataStream.write({
-                  type: "data-usage",
-                  data: finalMergedUsage,
-                });
-                return;
-              }
-
-              const summary = getUsage({ modelId, usage, providers });
-              finalMergedUsage = { ...usage, ...summary, modelId } as AppUsage;
-              dataStream.write({ type: "data-usage", data: finalMergedUsage });
+              await updateChatLastContextById({
+                chatId: id,
+                context: finalMergedUsage,
+              });
             } catch (err) {
-              console.warn("TokenLens enrichment failed", err);
-              finalMergedUsage = usage;
-              dataStream.write({ type: "data-usage", data: finalMergedUsage });
+              console.warn("Unable to persist last usage for chat", id, err);
             }
-          },
-        });
-
-        result.consumeStream();
-
-        dataStream.merge(
-          result.toUIMessageStream({
-            sendReasoning: true,
-          })
-        );
-
-        aiSpan.setStatus({ code: SpanStatusCode.OK });
-        aiSpan.end();
-
-        return result;
-        });
-      },
-      generateId: generateUUID,
-      onFinish: async ({ messages }) => {
-        await saveMessages({
-          messages: messages.map((currentMessage) => ({
-            id: currentMessage.id,
-            role: currentMessage.role,
-            parts: currentMessage.parts,
-            createdAt: new Date(),
-            attachments: [],
-            chatId: id,
-          })),
-        });
-
-        if (finalMergedUsage) {
-          try {
-            await updateChatLastContextById({
-              chatId: id,
-              context: finalMergedUsage,
-            });
-          } catch (err) {
-            console.warn("Unable to persist last usage for chat", id, err);
           }
-        }
-      },
-      onError: () => {
-        return "Oops, an error occurred!";
-      },
-    });
+        },
+        onError: () => {
+          return "Oops, an error occurred!";
+        },
+      });
 
-    // const streamContext = getStreamContext();
+      // const streamContext = getStreamContext();
 
-    // if (streamContext) {
-    //   return new Response(
-    //     await streamContext.resumableStream(streamId, () =>
-    //       stream.pipeThrough(new JsonToSseTransformStream())
-    //     )
-    //   );
-    // }
+      // if (streamContext) {
+      //   return new Response(
+      //     await streamContext.resumableStream(streamId, () =>
+      //       stream.pipeThrough(new JsonToSseTransformStream())
+      //     )
+      //   );
+      // }
 
-    return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
+      return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
     } catch (error) {
       const vercelId = request.headers.get("x-vercel-id");
 
@@ -424,7 +439,10 @@ export async function DELETE(request: Request) {
       const id = searchParams.get("id");
 
       if (!id) {
-        span.setStatus({ code: SpanStatusCode.ERROR, message: "Missing chat ID" });
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: "Missing chat ID",
+        });
         return new ChatSDKError("bad_request:api").toResponse();
       }
 
@@ -458,7 +476,10 @@ export async function DELETE(request: Request) {
 
       return Response.json(deletedChat, { status: 200 });
     } catch (error) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: "Delete chat error" });
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: "Delete chat error",
+      });
       span.recordException(error as Error);
 
       logger.emit({

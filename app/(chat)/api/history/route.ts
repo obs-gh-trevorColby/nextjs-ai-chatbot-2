@@ -1,6 +1,6 @@
-import type { NextRequest } from "next/server";
-import { trace, SpanStatusCode } from "@opentelemetry/api";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
+import type { NextRequest } from "next/server";
 import { auth } from "@/app/(auth)/auth";
 import { getChatsByUserId } from "@/lib/db/queries";
 import { ChatSDKError } from "@/lib/errors";
@@ -29,7 +29,10 @@ export async function GET(request: NextRequest) {
       });
 
       if (startingAfter && endingBefore) {
-        span.setStatus({ code: SpanStatusCode.ERROR, message: "Invalid pagination parameters" });
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: "Invalid pagination parameters",
+        });
         return new ChatSDKError(
           "bad_request:api",
           "Only one of starting_after or ending_before can be provided."
@@ -45,14 +48,17 @@ export async function GET(request: NextRequest) {
 
       span.setAttributes({ "user.id": session.user.id });
 
-      const chats = await getChatsByUserId({
+      const result = await getChatsByUserId({
         id: session.user.id,
         limit,
         startingAfter,
         endingBefore,
       });
 
-      span.setAttributes({ "history.chats.count": chats.length });
+      span.setAttributes({
+        "history.chats.count": result.chats.length,
+        "history.hasMore": result.hasMore,
+      });
       span.setStatus({ code: SpanStatusCode.OK });
 
       logger.emit({
@@ -61,14 +67,18 @@ export async function GET(request: NextRequest) {
         body: "Chat history retrieved successfully",
         attributes: {
           "user.id": session.user.id,
-          "history.chats.count": chats.length,
+          "history.chats.count": result.chats.length,
           "history.limit": limit,
+          "history.hasMore": result.hasMore,
         },
       });
 
-      return Response.json(chats);
+      return Response.json(result);
     } catch (error) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: "Get history error" });
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: "Get history error",
+      });
       span.recordException(error as Error);
 
       logger.emit({

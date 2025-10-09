@@ -1,4 +1,4 @@
-import { trace, SpanStatusCode } from "@opentelemetry/api";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import { auth } from "@/app/(auth)/auth";
 import { getChatById, getVotesByChatId, voteMessage } from "@/lib/db/queries";
@@ -19,7 +19,10 @@ export async function GET(request: Request) {
       const chatId = searchParams.get("chatId");
 
       if (!chatId) {
-        span.setStatus({ code: SpanStatusCode.ERROR, message: "Missing chatId" });
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: "Missing chatId",
+        });
         return new ChatSDKError(
           "bad_request:api",
           "Parameter chatId is required."
@@ -40,7 +43,10 @@ export async function GET(request: Request) {
       const chat = await getChatById({ id: chatId });
 
       if (!chat) {
-        span.setStatus({ code: SpanStatusCode.ERROR, message: "Chat not found" });
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: "Chat not found",
+        });
         return new ChatSDKError("not_found:chat").toResponse();
       }
 
@@ -61,7 +67,10 @@ export async function GET(request: Request) {
 
       return Response.json(votes, { status: 200 });
     } catch (error) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: "Get votes error" });
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: "Get votes error",
+      });
       span.recordException(error as Error);
 
       logger.emit({
@@ -94,7 +103,10 @@ export async function PATCH(request: Request) {
         await request.json();
 
       if (!chatId || !messageId || !type) {
-        span.setStatus({ code: SpanStatusCode.ERROR, message: "Missing required parameters" });
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: "Missing required parameters",
+        });
         return new ChatSDKError(
           "bad_request:api",
           "Parameters chatId, messageId, and type are required."
@@ -119,7 +131,10 @@ export async function PATCH(request: Request) {
       const chat = await getChatById({ id: chatId });
 
       if (!chat) {
-        span.setStatus({ code: SpanStatusCode.ERROR, message: "Chat not found" });
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: "Chat not found",
+        });
         return new ChatSDKError("not_found:vote").toResponse();
       }
 
@@ -149,7 +164,10 @@ export async function PATCH(request: Request) {
 
       return new Response("Message voted", { status: 200 });
     } catch (error) {
-      span.setStatus({ code: SpanStatusCode.ERROR, message: "Vote message error" });
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: "Vote message error",
+      });
       span.recordException(error as Error);
 
       logger.emit({

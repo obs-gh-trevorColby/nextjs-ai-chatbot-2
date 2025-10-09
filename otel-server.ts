@@ -30,7 +30,7 @@ const resource = resourceFromAttributes({
 
 // Initialize OpenTelemetry SDK
 export const sdk = new NodeSDK({
-  resource: resource,
+  resource,
   traceExporter: new OTLPTraceExporter({
     url: `${otlpEndpoint}/v1/traces`,
     headers: {
@@ -53,7 +53,7 @@ export const sdk = new NodeSDK({
 
 // Initialize Logger Provider
 const loggerProvider = new LoggerProvider({
-  resource: resource,
+  resource,
   processors: [
     new BatchLogRecordProcessor(
       new OTLPLogExporter({
