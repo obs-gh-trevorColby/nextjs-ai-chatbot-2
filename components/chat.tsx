@@ -33,6 +33,8 @@ import { getChatHistoryPaginationKey } from "./sidebar-history";
 import { toast } from "./toast";
 import type { VisibilityType } from "./visibility-selector";
 
+// Client-side telemetry initialization happens in ClientOtelProvider
+
 export function Chat({
   id,
   initialMessages,
