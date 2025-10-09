@@ -16,6 +16,8 @@ import {
 import type { ModelCatalog } from "tokenlens/core";
 import { fetchModels } from "tokenlens/fetch";
 import { getUsage } from "tokenlens/helpers";
+import { trace, context, SpanStatusCode } from "@opentelemetry/api";
+import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import { auth, type UserType } from "@/app/(auth)/auth";
 import type { VisibilityType } from "@/components/visibility-selector";
 import { entitlementsByUserType } from "@/lib/ai/entitlements";
@@ -84,15 +86,45 @@ export function getStreamContext() {
   return globalStreamContext;
 }
 
-export async function POST(request: Request) {
-  let requestBody: PostRequestBody;
+const tracer = trace.getTracer("ai-chatbot");
+const logger = logs.getLogger("ai-chatbot");
 
-  try {
-    const json = await request.json();
-    requestBody = postRequestBodySchema.parse(json);
-  } catch (_) {
-    return new ChatSDKError("bad_request:api").toResponse();
-  }
+export async function POST(request: Request) {
+  return tracer.startActiveSpan("chat.post", async (span) => {
+    const startTime = Date.now();
+    let requestBody: PostRequestBody;
+
+    try {
+      span.setAttributes({
+        "http.method": "POST",
+        "http.route": "/api/chat",
+      });
+
+      logger.emit({
+        severityNumber: SeverityNumber.INFO,
+        severityText: "INFO",
+        body: "Chat API request started",
+        attributes: {
+          "http.method": "POST",
+          "http.route": "/api/chat",
+        },
+      });
+
+      const json = await request.json();
+      requestBody = postRequestBodySchema.parse(json);
+    } catch (error) {
+      span.setStatus({ code: SpanStatusCode.ERROR, message: "Invalid request body" });
+      span.recordException(error as Error);
+
+      logger.emit({
+        severityNumber: SeverityNumber.ERROR,
+        severityText: "ERROR",
+        body: "Invalid request body",
+        attributes: { error: (error as Error).message },
+      });
+
+      return new ChatSDKError("bad_request:api").toResponse();
+    }
 
   try {
     const {
@@ -110,17 +142,39 @@ export async function POST(request: Request) {
     const session = await auth();
 
     if (!session?.user) {
+      span.setStatus({ code: SpanStatusCode.ERROR, message: "Unauthorized" });
       return new ChatSDKError("unauthorized:chat").toResponse();
     }
 
     const userType: UserType = session.user.type;
+
+    span.setAttributes({
+      "user.id": session.user.id,
+      "user.type": userType,
+      "chat.id": id,
+      "chat.model": selectedChatModel,
+      "chat.visibility": selectedVisibilityType,
+    });
 
     const messageCount = await getMessageCountByUserId({
       id: session.user.id,
       differenceInHours: 24,
     });
 
+    span.setAttributes({ "user.messageCount": messageCount });
+
     if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
+      span.setStatus({ code: SpanStatusCode.ERROR, message: "Rate limit exceeded" });
+      logger.emit({
+        severityNumber: SeverityNumber.WARN,
+        severityText: "WARN",
+        body: "Rate limit exceeded",
+        attributes: {
+          "user.id": session.user.id,
+          "user.messageCount": messageCount,
+          "user.maxMessages": entitlementsByUserType[userType].maxMessagesPerDay,
+        },
+      });
       return new ChatSDKError("rate_limit:chat").toResponse();
     }
 
@@ -173,9 +227,27 @@ export async function POST(request: Request) {
 
     let finalMergedUsage: AppUsage | undefined;
 
+    logger.emit({
+      severityNumber: SeverityNumber.INFO,
+      severityText: "INFO",
+      body: "Starting AI stream",
+      attributes: {
+        "chat.id": id,
+        "chat.model": selectedChatModel,
+        "user.id": session.user.id,
+        "messages.count": uiMessages.length,
+      },
+    });
+
     const stream = createUIMessageStream({
       execute: ({ writer: dataStream }) => {
-        const result = streamText({
+        return tracer.startActiveSpan("ai.stream", (aiSpan) => {
+          aiSpan.setAttributes({
+            "ai.model": selectedChatModel,
+            "ai.messages.count": uiMessages.length,
+          });
+
+          const result = streamText({
           model: myProvider.languageModel(selectedChatModel),
           system: systemPrompt({ selectedChatModel, requestHints }),
           messages: convertToModelMessages(uiMessages),
@@ -244,6 +316,12 @@ export async function POST(request: Request) {
             sendReasoning: true,
           })
         );
+
+        aiSpan.setStatus({ code: SpanStatusCode.OK });
+        aiSpan.end();
+
+        return result;
+        });
       },
       generateId: generateUUID,
       onFinish: async ({ messages }) => {
@@ -285,49 +363,114 @@ export async function POST(request: Request) {
     // }
 
     return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
-  } catch (error) {
-    const vercelId = request.headers.get("x-vercel-id");
+    } catch (error) {
+      const vercelId = request.headers.get("x-vercel-id");
 
-    if (error instanceof ChatSDKError) {
-      return error.toResponse();
+      span.setStatus({ code: SpanStatusCode.ERROR, message: "Chat API error" });
+      span.recordException(error as Error);
+
+      logger.emit({
+        severityNumber: SeverityNumber.ERROR,
+        severityText: "ERROR",
+        body: "Chat API error",
+        attributes: {
+          error: (error as Error).message,
+          vercelId: vercelId || "unknown",
+          duration: Date.now() - startTime,
+        },
+      });
+
+      if (error instanceof ChatSDKError) {
+        return error.toResponse();
+      }
+
+      // Check for Vercel AI Gateway credit card error
+      if (
+        error instanceof Error &&
+        error.message?.includes(
+          "AI Gateway requires a valid credit card on file to service requests"
+        )
+      ) {
+        return new ChatSDKError("bad_request:activate_gateway").toResponse();
+      }
+
+      console.error("Unhandled error in chat API:", error, { vercelId });
+      return new ChatSDKError("offline:chat").toResponse();
+    } finally {
+      span.end();
     }
-
-    // Check for Vercel AI Gateway credit card error
-    if (
-      error instanceof Error &&
-      error.message?.includes(
-        "AI Gateway requires a valid credit card on file to service requests"
-      )
-    ) {
-      return new ChatSDKError("bad_request:activate_gateway").toResponse();
-    }
-
-    console.error("Unhandled error in chat API:", error, { vercelId });
-    return new ChatSDKError("offline:chat").toResponse();
-  }
+  });
 }
 
 export async function DELETE(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get("id");
+  return tracer.startActiveSpan("chat.delete", async (span) => {
+    try {
+      span.setAttributes({
+        "http.method": "DELETE",
+        "http.route": "/api/chat",
+      });
 
-  if (!id) {
-    return new ChatSDKError("bad_request:api").toResponse();
-  }
+      logger.emit({
+        severityNumber: SeverityNumber.INFO,
+        severityText: "INFO",
+        body: "Chat delete request started",
+        attributes: {
+          "http.method": "DELETE",
+          "http.route": "/api/chat",
+        },
+      });
 
-  const session = await auth();
+      const { searchParams } = new URL(request.url);
+      const id = searchParams.get("id");
 
-  if (!session?.user) {
-    return new ChatSDKError("unauthorized:chat").toResponse();
-  }
+      if (!id) {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: "Missing chat ID" });
+        return new ChatSDKError("bad_request:api").toResponse();
+      }
 
-  const chat = await getChatById({ id });
+      span.setAttributes({ "chat.id": id });
 
-  if (chat?.userId !== session.user.id) {
-    return new ChatSDKError("forbidden:chat").toResponse();
-  }
+      const session = await auth();
 
-  const deletedChat = await deleteChatById({ id });
+      if (!session?.user) {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: "Unauthorized" });
+        return new ChatSDKError("unauthorized:chat").toResponse();
+      }
 
-  return Response.json(deletedChat, { status: 200 });
+      span.setAttributes({ "user.id": session.user.id });
+
+      const chat = await getChatById({ id });
+
+      if (chat?.userId !== session.user.id) {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: "Forbidden" });
+        return new ChatSDKError("forbidden:chat").toResponse();
+      }
+
+      const deletedChat = await deleteChatById({ id });
+
+      span.setStatus({ code: SpanStatusCode.OK });
+      logger.emit({
+        severityNumber: SeverityNumber.INFO,
+        severityText: "INFO",
+        body: "Chat deleted successfully",
+        attributes: { "chat.id": id, "user.id": session.user.id },
+      });
+
+      return Response.json(deletedChat, { status: 200 });
+    } catch (error) {
+      span.setStatus({ code: SpanStatusCode.ERROR, message: "Delete chat error" });
+      span.recordException(error as Error);
+
+      logger.emit({
+        severityNumber: SeverityNumber.ERROR,
+        severityText: "ERROR",
+        body: "Delete chat error",
+        attributes: { error: (error as Error).message },
+      });
+
+      throw error;
+    } finally {
+      span.end();
+    }
+  });
 }
