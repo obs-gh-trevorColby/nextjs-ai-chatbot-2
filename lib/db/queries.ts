@@ -19,6 +19,7 @@ import type { VisibilityType } from "@/components/visibility-selector";
 import { ChatSDKError } from "../errors";
 import type { AppUsage } from "../usage";
 import { generateUUID } from "../utils";
+import { createDatabaseSpan, logError, addSpanAttributes } from "../telemetry/server";
 import {
   type Chat,
   chat,
@@ -91,16 +92,32 @@ export async function saveChat({
   title: string;
   visibility: VisibilityType;
 }) {
+  const span = createDatabaseSpan("insert", "chat", {
+    "chat.id": id,
+    "chat.title": title,
+    "chat.visibility": visibility,
+  });
+
   try {
-    return await db.insert(chat).values({
+    const result = await db.insert(chat).values({
       id,
       createdAt: new Date(),
       userId,
       title,
       visibility,
     });
-  } catch (_error) {
+
+    addSpanAttributes({ "db.operation.success": true });
+    return result;
+  } catch (error) {
+    addSpanAttributes({ "db.operation.success": false });
+    logError(error as Error, {
+      "db.operation": "saveChat",
+      "chat.id": id,
+    });
     throw new ChatSDKError("bad_request:database", "Failed to save chat");
+  } finally {
+    span.end();
   }
 }
 
@@ -200,38 +217,88 @@ export async function getChatsByUserId({
 }
 
 export async function getChatById({ id }: { id: string }) {
+  const span = createDatabaseSpan("select", "chat", { "chat.id": id });
+
   try {
     const [selectedChat] = await db.select().from(chat).where(eq(chat.id, id));
+
+    addSpanAttributes({
+      "db.operation.success": true,
+      "chat.found": !!selectedChat,
+    });
+
     if (!selectedChat) {
       return null;
     }
 
     return selectedChat;
-  } catch (_error) {
+  } catch (error) {
+    addSpanAttributes({ "db.operation.success": false });
+    logError(error as Error, {
+      "db.operation": "getChatById",
+      "chat.id": id,
+    });
     throw new ChatSDKError("bad_request:database", "Failed to get chat by id");
+  } finally {
+    span.end();
   }
 }
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
+  const span = createDatabaseSpan("insert", "message", {
+    "messages.count": messages.length,
+    "chat.id": messages[0]?.chatId,
+  });
+
   try {
-    return await db.insert(message).values(messages);
-  } catch (_error) {
+    const result = await db.insert(message).values(messages);
+
+    addSpanAttributes({
+      "db.operation.success": true,
+      "messages.saved": messages.length,
+    });
+
+    return result;
+  } catch (error) {
+    addSpanAttributes({ "db.operation.success": false });
+    logError(error as Error, {
+      "db.operation": "saveMessages",
+      "messages.count": messages.length,
+    });
     throw new ChatSDKError("bad_request:database", "Failed to save messages");
+  } finally {
+    span.end();
   }
 }
 
 export async function getMessagesByChatId({ id }: { id: string }) {
+  const span = createDatabaseSpan("select", "message", { "chat.id": id });
+
   try {
-    return await db
+    const messages = await db
       .select()
       .from(message)
       .where(eq(message.chatId, id))
       .orderBy(asc(message.createdAt));
-  } catch (_error) {
+
+    addSpanAttributes({
+      "db.operation.success": true,
+      "messages.count": messages.length,
+    });
+
+    return messages;
+  } catch (error) {
+    addSpanAttributes({ "db.operation.success": false });
+    logError(error as Error, {
+      "db.operation": "getMessagesByChatId",
+      "chat.id": id,
+    });
     throw new ChatSDKError(
       "bad_request:database",
       "Failed to get messages by chat id"
     );
+  } finally {
+    span.end();
   }
 }
 
