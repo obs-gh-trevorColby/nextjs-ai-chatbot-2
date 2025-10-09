@@ -1,5 +1,7 @@
 import "server-only";
 
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import {
   and,
   asc,
@@ -34,6 +36,8 @@ import {
 } from "./schema";
 import { generateHashedPassword } from "./utils";
 
+const tracer = trace.getTracer("ai-chatbot-db");
+
 // Optionally, if not using email/pass login, you can
 // use the Drizzle adapter for Auth.js / NextAuth
 // https://authjs.dev/reference/adapter/drizzle
@@ -43,14 +47,37 @@ const client = postgres(process.env.POSTGRES_URL!);
 const db = drizzle(client);
 
 export async function getUser(email: string): Promise<User[]> {
-  try {
-    return await db.select().from(user).where(eq(user.email, email));
-  } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get user by email"
-    );
-  }
+  return tracer.startActiveSpan("db_get_user", async (span) => {
+    span.setAttributes({
+      "db.operation": "select",
+      "db.table": "user",
+      "user.email": email,
+    });
+
+    try {
+      const result = await db.select().from(user).where(eq(user.email, email));
+
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.setAttributes({
+        "db.result.count": result.length,
+      });
+
+      span.end();
+      return result;
+    } catch (error) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: (error as Error).message,
+      });
+      span.recordException(error as Error);
+      span.end();
+
+      throw new ChatSDKError(
+        "bad_request:database",
+        "Failed to get user by email"
+      );
+    }
+  });
 }
 
 export async function createUser(email: string, password: string) {
@@ -91,17 +118,39 @@ export async function saveChat({
   title: string;
   visibility: VisibilityType;
 }) {
-  try {
-    return await db.insert(chat).values({
-      id,
-      createdAt: new Date(),
-      userId,
-      title,
-      visibility,
+  return tracer.startActiveSpan("db_save_chat", async (span) => {
+    span.setAttributes({
+      "db.operation": "insert",
+      "db.table": "chat",
+      "chat.id": id,
+      "chat.user_id": userId,
+      "chat.title": title,
+      "chat.visibility": visibility,
     });
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save chat");
-  }
+
+    try {
+      const result = await db.insert(chat).values({
+        id,
+        createdAt: new Date(),
+        userId,
+        title,
+        visibility,
+      });
+
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.end();
+      return result;
+    } catch (error) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: (error as Error).message,
+      });
+      span.recordException(error as Error);
+      span.end();
+
+      throw new ChatSDKError("bad_request:database", "Failed to save chat");
+    }
+  });
 }
 
 export async function deleteChatById({ id }: { id: string }) {
