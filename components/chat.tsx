@@ -1,6 +1,8 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
+
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import { DefaultChatTransport } from "ai";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -32,6 +34,26 @@ import { MultimodalInput } from "./multimodal-input";
 import { getChatHistoryPaginationKey } from "./sidebar-history";
 import { toast } from "./toast";
 import type { VisibilityType } from "./visibility-selector";
+
+// Client-side OpenTelemetry components
+let clientLogger: any;
+let clientTracer: any;
+let clientMeter: any;
+
+async function getClientOtelComponents() {
+  if (!clientLogger || !clientTracer || !clientMeter) {
+    try {
+      const otel = await import("@/otel-client");
+      clientLogger = otel.logger;
+      clientTracer = otel.tracer;
+      clientMeter = otel.meter;
+    } catch (error) {
+      // OpenTelemetry not available on client
+      console.warn("Client OpenTelemetry components not available:", error);
+    }
+  }
+  return { logger: clientLogger, tracer: clientTracer, meter: clientMeter };
+}
 
 export function Chat({
   id,
@@ -68,6 +90,37 @@ export function Chat({
     currentModelIdRef.current = currentModelId;
   }, [currentModelId]);
 
+  // Log chat component initialization
+  useEffect(() => {
+    const logChatInit = async () => {
+      const { logger } = await getClientOtelComponents();
+      if (logger) {
+        logger.emit({
+          severityNumber: SeverityNumber.INFO,
+          severityText: "INFO",
+          body: "Chat component initialized",
+          attributes: {
+            chat_id: id,
+            initial_message_count: initialMessages.length,
+            model: initialChatModel,
+            visibility: initialVisibilityType,
+            is_readonly: isReadonly,
+            auto_resume: autoResume,
+          },
+        });
+      }
+    };
+
+    logChatInit();
+  }, [
+    id,
+    initialMessages.length,
+    initialChatModel,
+    initialVisibilityType,
+    isReadonly,
+    autoResume,
+  ]);
+
   const {
     messages,
     setMessages,
@@ -102,10 +155,43 @@ export function Chat({
         setUsage(dataPart.data);
       }
     },
-    onFinish: () => {
+    onFinish: async () => {
       mutate(unstable_serialize(getChatHistoryPaginationKey));
+
+      // Log successful chat completion
+      const { logger } = await getClientOtelComponents();
+      if (logger) {
+        logger.emit({
+          severityNumber: SeverityNumber.INFO,
+          severityText: "INFO",
+          body: "Chat message completed",
+          attributes: {
+            chat_id: id,
+            message_count: messages.length + 1,
+            model: currentModelIdRef.current,
+          },
+        });
+      }
     },
-    onError: (error) => {
+    onError: async (error) => {
+      // Log client-side errors
+      const { logger } = await getClientOtelComponents();
+      if (logger) {
+        logger.emit({
+          severityNumber: SeverityNumber.ERROR,
+          severityText: "ERROR",
+          body: "Chat error occurred",
+          attributes: {
+            chat_id: id,
+            error_message: error.message,
+            error_type:
+              error instanceof ChatSDKError
+                ? "chat_sdk_error"
+                : "unknown_error",
+          },
+        });
+      }
+
       if (error instanceof ChatSDKError) {
         // Check if it's a credit card error
         if (

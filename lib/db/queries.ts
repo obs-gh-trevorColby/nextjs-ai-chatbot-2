@@ -1,5 +1,7 @@
 import "server-only";
 
+import { type Span, SpanStatusCode } from "@opentelemetry/api";
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import {
   and,
   asc,
@@ -33,6 +35,26 @@ import {
   vote,
 } from "./schema";
 import { generateHashedPassword } from "./utils";
+
+// Import OpenTelemetry components - use dynamic import to avoid circular dependencies
+let logger: any;
+let tracer: any;
+let meter: any;
+
+async function getOtelComponents() {
+  if (!logger || !tracer || !meter) {
+    try {
+      const otel = await import("@/otel-server");
+      logger = otel.logger;
+      tracer = otel.tracer;
+      meter = otel.meter;
+    } catch (error) {
+      // Fallback if OpenTelemetry is not available
+      console.warn("OpenTelemetry components not available in queries:", error);
+    }
+  }
+  return { logger, tracer, meter };
+}
 
 // Optionally, if not using email/pass login, you can
 // use the Drizzle adapter for Auth.js / NextAuth
@@ -200,12 +222,69 @@ export async function getChatsByUserId({
 }
 
 export async function getChatById({ id }: { id: string }) {
+  const { tracer: otelTracer, logger: otelLogger } = await getOtelComponents();
+
+  if (otelTracer) {
+    return otelTracer.startActiveSpan("db.getChatById", async (span: Span) => {
+      try {
+        span.setAttributes({
+          "db.operation": "select",
+          "db.table": "chat",
+          "chat.id": id,
+        });
+
+        const [selectedChat] = await db
+          .select()
+          .from(chat)
+          .where(eq(chat.id, id));
+
+        if (!selectedChat) {
+          span.setAttributes({ "chat.found": false });
+          return null;
+        }
+
+        span.setAttributes({
+          "chat.found": true,
+          "chat.userId": selectedChat.userId,
+          "chat.visibility": selectedChat.visibility,
+        });
+        span.setStatus({ code: SpanStatusCode.OK });
+
+        return selectedChat;
+      } catch (error) {
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: (error as Error).message,
+        });
+        span.recordException(error as Error);
+
+        if (otelLogger) {
+          otelLogger.emit({
+            severityNumber: SeverityNumber.ERROR,
+            severityText: "ERROR",
+            body: "Database error in getChatById",
+            attributes: {
+              chat_id: id,
+              error_message: (error as Error).message,
+            },
+          });
+        }
+
+        throw new ChatSDKError(
+          "bad_request:database",
+          "Failed to get chat by id"
+        );
+      } finally {
+        span.end();
+      }
+    });
+  }
+  // Fallback without tracing
   try {
     const [selectedChat] = await db.select().from(chat).where(eq(chat.id, id));
     if (!selectedChat) {
       return null;
     }
-
     return selectedChat;
   } catch (_error) {
     throw new ChatSDKError("bad_request:database", "Failed to get chat by id");
@@ -213,6 +292,70 @@ export async function getChatById({ id }: { id: string }) {
 }
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
+  const { tracer: otelTracer, logger: otelLogger } = await getOtelComponents();
+
+  if (otelTracer) {
+    return otelTracer.startActiveSpan("db.saveMessages", async (span: Span) => {
+      try {
+        span.setAttributes({
+          "db.operation": "insert",
+          "db.table": "message",
+          "messages.count": messages.length,
+        });
+
+        if (messages.length > 0) {
+          span.setAttributes({
+            "chat.id": messages[0].chatId,
+            "messages.roles": messages.map((m) => m.role).join(","),
+          });
+        }
+
+        const result = await db.insert(message).values(messages);
+
+        span.setStatus({ code: SpanStatusCode.OK });
+
+        if (otelLogger) {
+          otelLogger.emit({
+            severityNumber: SeverityNumber.INFO,
+            severityText: "INFO",
+            body: "Messages saved successfully",
+            attributes: {
+              messages_count: messages.length,
+              chat_id: messages[0]?.chatId,
+            },
+          });
+        }
+
+        return result;
+      } catch (error) {
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: (error as Error).message,
+        });
+        span.recordException(error as Error);
+
+        if (otelLogger) {
+          otelLogger.emit({
+            severityNumber: SeverityNumber.ERROR,
+            severityText: "ERROR",
+            body: "Database error in saveMessages",
+            attributes: {
+              messages_count: messages.length,
+              error_message: (error as Error).message,
+            },
+          });
+        }
+
+        throw new ChatSDKError(
+          "bad_request:database",
+          "Failed to save messages"
+        );
+      } finally {
+        span.end();
+      }
+    });
+  }
+  // Fallback without tracing
   try {
     return await db.insert(message).values(messages);
   } catch (_error) {
