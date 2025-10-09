@@ -33,6 +33,10 @@
   - [Vercel Blob](https://vercel.com/storage/blob) for efficient file storage
 - [Auth.js](https://authjs.dev)
   - Simple and secure authentication
+- [OpenTelemetry](https://opentelemetry.io)
+  - Comprehensive observability with distributed tracing, metrics, and logging
+  - Automatic instrumentation for HTTP, database, and AI operations
+  - Support for Jaeger, Prometheus, Grafana, and other observability platforms
 
 ## Model Providers
 
@@ -68,3 +72,33 @@ pnpm dev
 ```
 
 Your app template should now be running on [localhost:3000](http://localhost:3000).
+
+## Observability
+
+This application includes comprehensive OpenTelemetry instrumentation for monitoring and debugging. See [docs/TELEMETRY.md](docs/TELEMETRY.md) for detailed setup instructions.
+
+### Quick Start with Local Observability Stack
+
+1. **Start the observability stack**:
+   ```bash
+   ./scripts/start-observability.sh
+   ```
+
+2. **Configure telemetry** (copy and modify):
+   ```bash
+   cp .env.telemetry.example .env.local
+   ```
+
+3. **Access observability tools**:
+   - **Jaeger** (Tracing): http://localhost:16686
+   - **Prometheus** (Metrics): http://localhost:9090
+   - **Grafana** (Dashboards): http://localhost:3001 (admin/admin)
+
+The application automatically instruments:
+- API routes and database queries
+- AI model interactions and token usage
+- User authentication and authorization
+- Client-side interactions and performance
+- Error tracking and performance monitoring
+
+For production deployments on Vercel, telemetry is automatically configured via `@vercel/otel`.
