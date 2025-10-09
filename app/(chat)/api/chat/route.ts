@@ -38,6 +38,16 @@ import {
   updateChatLastContextById,
 } from "@/lib/db/queries";
 import { ChatSDKError } from "@/lib/errors";
+import {
+  recordChatDuration,
+  recordChatRequest,
+  recordMessage,
+} from "@/lib/metrics";
+import {
+  instrumentApiRoute,
+  instrumentDbOperation,
+  logWithTrace,
+} from "@/lib/otel-utils";
 import type { ChatMessage } from "@/lib/types";
 import type { AppUsage } from "@/lib/usage";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
@@ -84,8 +94,10 @@ export function getStreamContext() {
   return globalStreamContext;
 }
 
-export async function POST(request: Request) {
+async function handleChatPost(request: Request) {
+  const startTime = Date.now();
   let requestBody: PostRequestBody;
+  let selectedChatModel: ChatModel["id"] = "unknown";
 
   try {
     const json = await request.json();
@@ -98,7 +110,6 @@ export async function POST(request: Request) {
     const {
       id,
       message,
-      selectedChatModel,
       selectedVisibilityType,
     }: {
       id: string;
@@ -106,6 +117,12 @@ export async function POST(request: Request) {
       selectedChatModel: ChatModel["id"];
       selectedVisibilityType: VisibilityType;
     } = requestBody;
+
+    selectedChatModel = requestBody.selectedChatModel;
+
+    // Record metrics
+    recordMessage("user");
+    recordChatRequest(selectedChatModel, "success");
 
     const session = await auth();
 
@@ -115,16 +132,27 @@ export async function POST(request: Request) {
 
     const userType: UserType = session.user.type;
 
-    const messageCount = await getMessageCountByUserId({
+    const messageCount = await instrumentDbOperation(
+      "getMessageCountByUserId",
+      getMessageCountByUserId
+    )({
       id: session.user.id,
       differenceInHours: 24,
     });
 
     if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
+      logWithTrace("WARN", "Rate limit exceeded for user", {
+        userId: session.user.id,
+        messageCount,
+        limit: entitlementsByUserType[userType].maxMessagesPerDay,
+      });
       return new ChatSDKError("rate_limit:chat").toResponse();
     }
 
-    const chat = await getChatById({ id });
+    const chat = await instrumentDbOperation(
+      "getChatById",
+      getChatById
+    )({ id });
 
     if (chat) {
       if (chat.userId !== session.user.id) {
@@ -135,7 +163,10 @@ export async function POST(request: Request) {
         message,
       });
 
-      await saveChat({
+      await instrumentDbOperation(
+        "saveChat",
+        saveChat
+      )({
         id,
         userId: session.user.id,
         title,
@@ -284,9 +315,19 @@ export async function POST(request: Request) {
     //   );
     // }
 
+    // Record successful completion metrics
+    const duration = Date.now() - startTime;
+    recordChatDuration(duration, selectedChatModel);
+    recordMessage("assistant");
+
     return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
   } catch (error) {
     const vercelId = request.headers.get("x-vercel-id");
+
+    // Record error metrics
+    const duration = Date.now() - startTime;
+    recordChatRequest(selectedChatModel, "error");
+    recordChatDuration(duration, selectedChatModel);
 
     if (error instanceof ChatSDKError) {
       return error.toResponse();
@@ -302,12 +343,17 @@ export async function POST(request: Request) {
       return new ChatSDKError("bad_request:activate_gateway").toResponse();
     }
 
-    console.error("Unhandled error in chat API:", error, { vercelId });
+    logWithTrace("ERROR", "Unhandled error in chat API", {
+      error: error instanceof Error ? error.message : "Unknown error",
+      vercelId,
+    });
     return new ChatSDKError("offline:chat").toResponse();
   }
 }
 
-export async function DELETE(request: Request) {
+export const POST = instrumentApiRoute("chat.POST", handleChatPost);
+
+async function handleChatDelete(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
 
@@ -331,3 +377,5 @@ export async function DELETE(request: Request) {
 
   return Response.json(deletedChat, { status: 200 });
 }
+
+export const DELETE = instrumentApiRoute("chat.DELETE", handleChatDelete);

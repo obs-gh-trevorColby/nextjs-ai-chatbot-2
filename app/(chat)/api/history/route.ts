@@ -2,8 +2,9 @@ import type { NextRequest } from "next/server";
 import { auth } from "@/app/(auth)/auth";
 import { getChatsByUserId } from "@/lib/db/queries";
 import { ChatSDKError } from "@/lib/errors";
+import { instrumentApiRoute, instrumentDbOperation } from "@/lib/otel-utils";
 
-export async function GET(request: NextRequest) {
+async function handleHistoryGet(request: NextRequest) {
   const { searchParams } = request.nextUrl;
 
   const limit = Number.parseInt(searchParams.get("limit") || "10", 10);
@@ -23,7 +24,10 @@ export async function GET(request: NextRequest) {
     return new ChatSDKError("unauthorized:chat").toResponse();
   }
 
-  const chats = await getChatsByUserId({
+  const chats = await instrumentDbOperation(
+    "getChatsByUserId",
+    getChatsByUserId
+  )({
     id: session.user.id,
     limit,
     startingAfter,
@@ -32,3 +36,5 @@ export async function GET(request: NextRequest) {
 
   return Response.json(chats);
 }
+
+export const GET = instrumentApiRoute("history.GET", handleHistoryGet);
