@@ -68,3 +68,26 @@ pnpm dev
 ```
 
 Your app template should now be running on [localhost:3000](http://localhost:3000).
+
+## OpenTelemetry Instrumentation Setup Commands
+
+The following commands were executed to add comprehensive OpenTelemetry instrumentation to this Next.js AI chatbot:
+
+```bash
+pnpm add --save-dev import-in-the-middle require-in-the-middle
+pnpm add @opentelemetry/auto-instrumentations-node @opentelemetry/exporter-logs-otlp-http @opentelemetry/exporter-metrics-otlp-proto @opentelemetry/exporter-trace-otlp-http @opentelemetry/resources @opentelemetry/sdk-logs @opentelemetry/sdk-metrics @opentelemetry/sdk-node @opentelemetry/semantic-conventions
+pnpm add @opentelemetry/instrumentation @opentelemetry/instrumentation-document-load @opentelemetry/instrumentation-fetch @opentelemetry/instrumentation-xml-http-request @opentelemetry/sdk-trace-web
+pnpm install
+git add package.json pnpm-lock.yaml
+git commit -m "Add OpenTelemetry dependencies for comprehensive instrumentation"
+git add .
+git commit -m "Add comprehensive OpenTelemetry instrumentation for server and client
+
+- Created otel-server.ts with NodeSDK configuration for server-side telemetry
+- Created otel-client.ts with WebTracerProvider for client-side telemetry
+- Updated instrumentation.ts to use custom OpenTelemetry setup
+- Added ClientOtelProvider component for browser initialization
+- Integrated client-side telemetry into app layout
+- Configured automatic instrumentation for Node.js, fetch, XHR, and document load
+- Set up OTLP exporters for traces, metrics, and logs"
+```
