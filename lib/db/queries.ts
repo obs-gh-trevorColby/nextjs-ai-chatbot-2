@@ -1,5 +1,7 @@
 import "server-only";
 
+import { SpanStatusCode } from "@opentelemetry/api";
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import {
   and,
   asc,
@@ -33,6 +35,33 @@ import {
   vote,
 } from "./schema";
 import { generateHashedPassword } from "./utils";
+
+// Import OpenTelemetry components - use dynamic import to avoid circular dependencies
+let tracer: any;
+let logger: any;
+
+async function getOtelComponents() {
+  if (!tracer || !logger) {
+    try {
+      const otel = await import("@/otel-server");
+      tracer = otel.tracer;
+      logger = otel.logger;
+    } catch (error) {
+      // Fallback if OpenTelemetry is not available
+      tracer = {
+        startActiveSpan: (name: string, fn: any) =>
+          fn({
+            setAttributes: () => {},
+            setStatus: () => {},
+            recordException: () => {},
+            end: () => {},
+          }),
+      };
+      logger = { emit: () => {} };
+    }
+  }
+  return { tracer, logger };
+}
 
 // Optionally, if not using email/pass login, you can
 // use the Drizzle adapter for Auth.js / NextAuth
@@ -200,16 +229,60 @@ export async function getChatsByUserId({
 }
 
 export async function getChatById({ id }: { id: string }) {
-  try {
-    const [selectedChat] = await db.select().from(chat).where(eq(chat.id, id));
-    if (!selectedChat) {
-      return null;
-    }
+  const { tracer, logger } = await getOtelComponents();
 
-    return selectedChat;
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to get chat by id");
-  }
+  return tracer.startActiveSpan("db.getChatById", async (span: any) => {
+    try {
+      span.setAttributes({ "chat.id": id });
+
+      const [selectedChat] = await db
+        .select()
+        .from(chat)
+        .where(eq(chat.id, id));
+      if (!selectedChat) {
+        span.setAttributes({ "chat.found": false });
+        logger.emit({
+          severityNumber: SeverityNumber.DEBUG,
+          severityText: "DEBUG",
+          body: "Chat not found",
+          attributes: { chatId: id },
+        });
+        return null;
+      }
+
+      span.setAttributes({
+        "chat.found": true,
+        "chat.userId": selectedChat.userId,
+        "chat.title": selectedChat.title,
+      });
+
+      logger.emit({
+        severityNumber: SeverityNumber.DEBUG,
+        severityText: "DEBUG",
+        body: "Chat retrieved successfully",
+        attributes: { chatId: id, userId: selectedChat.userId },
+      });
+
+      return selectedChat;
+    } catch (error) {
+      span.setStatus({ code: SpanStatusCode.ERROR, message: "Database error" });
+      span.recordException(error as Error);
+
+      logger.emit({
+        severityNumber: SeverityNumber.ERROR,
+        severityText: "ERROR",
+        body: "Failed to get chat by id",
+        attributes: { chatId: id, error: (error as Error).message },
+      });
+
+      throw new ChatSDKError(
+        "bad_request:database",
+        "Failed to get chat by id"
+      );
+    } finally {
+      span.end();
+    }
+  });
 }
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
