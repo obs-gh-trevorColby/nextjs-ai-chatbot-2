@@ -1,6 +1,8 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import { DefaultChatTransport } from "ai";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -32,6 +34,25 @@ import { MultimodalInput } from "./multimodal-input";
 import { getChatHistoryPaginationKey } from "./sidebar-history";
 import { toast } from "./toast";
 import type { VisibilityType } from "./visibility-selector";
+
+// Client-side telemetry helpers
+let clientTracer: any = null;
+let clientLogger: any = null;
+let clientMeter: any = null;
+
+// Initialize client telemetry on component mount
+const initClientTelemetry = async () => {
+  if (typeof window !== "undefined" && !clientTracer) {
+    try {
+      const { tracer, logger, meter } = await import("@/otel-client");
+      clientTracer = tracer;
+      clientLogger = logger;
+      clientMeter = meter;
+    } catch (error) {
+      console.warn("Failed to initialize client telemetry:", error);
+    }
+  }
+};
 
 export function Chat({
   id,
@@ -122,6 +143,11 @@ export function Chat({
     },
   });
 
+  // Initialize client telemetry
+  useEffect(() => {
+    initClientTelemetry();
+  }, []);
+
   const searchParams = useSearchParams();
   const query = searchParams.get("query");
 
@@ -130,6 +156,7 @@ export function Chat({
   useEffect(() => {
     if (query && !hasAppendedQuery) {
       sendMessage({
+        id: generateUUID(),
         role: "user" as const,
         parts: [{ type: "text", text: query }],
       });

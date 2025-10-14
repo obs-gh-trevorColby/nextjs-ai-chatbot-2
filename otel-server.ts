@@ -1,3 +1,4 @@
+import { metrics, trace } from "@opentelemetry/api";
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
@@ -30,7 +31,7 @@ const resource = resourceFromAttributes({
 
 // Initialize OpenTelemetry SDK
 export const sdk = new NodeSDK({
-  resource: resource,
+  resource,
   traceExporter: new OTLPTraceExporter({
     url: `${otlpEndpoint}/v1/traces`,
     headers: {
@@ -53,7 +54,7 @@ export const sdk = new NodeSDK({
 
 // Initialize Logger Provider
 const loggerProvider = new LoggerProvider({
-  resource: resource,
+  resource,
   processors: [
     new BatchLogRecordProcessor(
       new OTLPLogExporter({
@@ -69,8 +70,8 @@ const loggerProvider = new LoggerProvider({
 
 // Export logger and tracer for use in application code
 export const logger = loggerProvider.getLogger(serviceName);
-export const tracer = sdk.getTracer(serviceName);
-export const meter = sdk.getMeter(serviceName);
+export const tracer = trace.getTracer(serviceName);
+export const meter = metrics.getMeter(serviceName);
 
 // Initialize OpenTelemetry and return initialized components
 export function initOtel() {
