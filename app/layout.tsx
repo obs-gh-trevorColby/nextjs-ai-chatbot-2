@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
+import { OtelClientInit } from "@/components/otel-client-init";
 
 import "./globals.css";
 import { SessionProvider } from "next-auth/react";
@@ -72,6 +73,7 @@ export default function RootLayout({
         />
       </head>
       <body className="antialiased">
+        <OtelClientInit />
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
