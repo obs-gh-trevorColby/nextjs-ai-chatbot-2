@@ -1,5 +1,7 @@
 import "server-only";
 
+import { type Span, SpanStatusCode, trace } from "@opentelemetry/api";
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import {
   and,
   asc,
@@ -41,6 +43,29 @@ import { generateHashedPassword } from "./utils";
 // biome-ignore lint: Forbidden non-null assertion.
 const client = postgres(process.env.POSTGRES_URL!);
 const db = drizzle(client);
+
+// Get tracer and logger for database operations
+let tracer: any;
+let logger: any;
+
+try {
+  // Import OpenTelemetry components only on server side
+  const otelModule = require("@/otel-server");
+  tracer = otelModule.tracer;
+  logger = otelModule.logger;
+} catch {
+  // Fallback if OpenTelemetry is not available
+  tracer = {
+    startActiveSpan: (name: string, fn: any) =>
+      fn({
+        setAttributes: () => {},
+        setStatus: () => {},
+        recordException: () => {},
+        end: () => {},
+      }),
+  };
+  logger = { emit: () => {} };
+}
 
 export async function getUser(email: string): Promise<User[]> {
   try {
@@ -91,17 +116,61 @@ export async function saveChat({
   title: string;
   visibility: VisibilityType;
 }) {
-  try {
-    return await db.insert(chat).values({
-      id,
-      createdAt: new Date(),
-      userId,
-      title,
-      visibility,
-    });
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save chat");
-  }
+  return tracer.startActiveSpan("db.saveChat", async (span: Span) => {
+    try {
+      span.setAttributes({
+        "db.operation": "insert",
+        "db.table": "chat",
+        "chat.id": id,
+        "user.id": userId,
+        "chat.visibility": visibility,
+      });
+
+      logger.emit({
+        severityNumber: SeverityNumber.INFO,
+        severityText: "INFO",
+        body: "Saving new chat",
+        attributes: {
+          "chat.id": id,
+          "user.id": userId,
+          "chat.title": title,
+          "chat.visibility": visibility,
+        },
+      });
+
+      const result = await db.insert(chat).values({
+        id,
+        createdAt: new Date(),
+        userId,
+        title,
+        visibility,
+      });
+
+      span.setStatus({ code: SpanStatusCode.OK });
+      return result;
+    } catch (error) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: (error as Error).message,
+      });
+      span.recordException(error as Error);
+
+      logger.emit({
+        severityNumber: SeverityNumber.ERROR,
+        severityText: "ERROR",
+        body: "Failed to save chat",
+        attributes: {
+          "chat.id": id,
+          "user.id": userId,
+          error: (error as Error).message,
+        },
+      });
+
+      throw new ChatSDKError("bad_request:database", "Failed to save chat");
+    } finally {
+      span.end();
+    }
+  });
 }
 
 export async function deleteChatById({ id }: { id: string }) {
@@ -200,24 +269,107 @@ export async function getChatsByUserId({
 }
 
 export async function getChatById({ id }: { id: string }) {
-  try {
-    const [selectedChat] = await db.select().from(chat).where(eq(chat.id, id));
-    if (!selectedChat) {
-      return null;
-    }
+  return tracer.startActiveSpan("db.getChatById", async (span: Span) => {
+    try {
+      span.setAttributes({
+        "db.operation": "select",
+        "db.table": "chat",
+        "chat.id": id,
+      });
 
-    return selectedChat;
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to get chat by id");
-  }
+      logger.emit({
+        severityNumber: SeverityNumber.DEBUG,
+        severityText: "DEBUG",
+        body: "Getting chat by ID",
+        attributes: {
+          "chat.id": id,
+        },
+      });
+
+      const [selectedChat] = await db
+        .select()
+        .from(chat)
+        .where(eq(chat.id, id));
+      if (!selectedChat) {
+        span.setAttributes({ "db.result": "not_found" });
+        return null;
+      }
+
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.setAttributes({ "db.result": "found" });
+      return selectedChat;
+    } catch (error) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: (error as Error).message,
+      });
+      span.recordException(error as Error);
+
+      logger.emit({
+        severityNumber: SeverityNumber.ERROR,
+        severityText: "ERROR",
+        body: "Failed to get chat by id",
+        attributes: {
+          "chat.id": id,
+          error: (error as Error).message,
+        },
+      });
+
+      throw new ChatSDKError(
+        "bad_request:database",
+        "Failed to get chat by id"
+      );
+    } finally {
+      span.end();
+    }
+  });
 }
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
-  try {
-    return await db.insert(message).values(messages);
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save messages");
-  }
+  return tracer.startActiveSpan("db.saveMessages", async (span: Span) => {
+    try {
+      span.setAttributes({
+        "db.operation": "insert",
+        "db.table": "message",
+        "message.count": messages.length,
+      });
+
+      logger.emit({
+        severityNumber: SeverityNumber.INFO,
+        severityText: "INFO",
+        body: "Saving messages",
+        attributes: {
+          "message.count": messages.length,
+          "chat.id": messages[0]?.chatId,
+        },
+      });
+
+      const result = await db.insert(message).values(messages);
+
+      span.setStatus({ code: SpanStatusCode.OK });
+      return result;
+    } catch (error) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: (error as Error).message,
+      });
+      span.recordException(error as Error);
+
+      logger.emit({
+        severityNumber: SeverityNumber.ERROR,
+        severityText: "ERROR",
+        body: "Failed to save messages",
+        attributes: {
+          "message.count": messages.length,
+          error: (error as Error).message,
+        },
+      });
+
+      throw new ChatSDKError("bad_request:database", "Failed to save messages");
+    } finally {
+      span.end();
+    }
+  });
 }
 
 export async function getMessagesByChatId({ id }: { id: string }) {
