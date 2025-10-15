@@ -17,6 +17,7 @@ import postgres from "postgres";
 import type { ArtifactKind } from "@/components/artifact";
 import type { VisibilityType } from "@/components/visibility-selector";
 import { ChatSDKError } from "../errors";
+import { instrumentDatabaseOperation } from "../observability";
 import type { AppUsage } from "../usage";
 import { generateUUID } from "../utils";
 import {
@@ -200,24 +201,48 @@ export async function getChatsByUserId({
 }
 
 export async function getChatById({ id }: { id: string }) {
-  try {
-    const [selectedChat] = await db.select().from(chat).where(eq(chat.id, id));
-    if (!selectedChat) {
-      return null;
-    }
+  return instrumentDatabaseOperation(
+    "getChatById",
+    async () => {
+      try {
+        const [selectedChat] = await db
+          .select()
+          .from(chat)
+          .where(eq(chat.id, id));
+        if (!selectedChat) {
+          return null;
+        }
 
-    return selectedChat;
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to get chat by id");
-  }
+        return selectedChat;
+      } catch (_error) {
+        throw new ChatSDKError(
+          "bad_request:database",
+          "Failed to get chat by id"
+        );
+      }
+    },
+    { chatId: id }
+  );
 }
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
-  try {
-    return await db.insert(message).values(messages);
-  } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save messages");
-  }
+  return instrumentDatabaseOperation(
+    "saveMessages",
+    async () => {
+      try {
+        return await db.insert(message).values(messages);
+      } catch (_error) {
+        throw new ChatSDKError(
+          "bad_request:database",
+          "Failed to save messages"
+        );
+      }
+    },
+    {
+      messageCount: messages.length,
+      chatIds: [...new Set(messages.map((m) => m.chatId))],
+    }
+  );
 }
 
 export async function getMessagesByChatId({ id }: { id: string }) {
