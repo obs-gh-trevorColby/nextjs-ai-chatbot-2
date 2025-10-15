@@ -17,6 +17,7 @@ import postgres from "postgres";
 import type { ArtifactKind } from "@/components/artifact";
 import type { VisibilityType } from "@/components/visibility-selector";
 import { ChatSDKError } from "../errors";
+import { observabilityLogger } from "../observability";
 import type { AppUsage } from "../usage";
 import { generateUUID } from "../utils";
 import {
@@ -44,8 +45,12 @@ const db = drizzle(client);
 
 export async function getUser(email: string): Promise<User[]> {
   try {
+    observabilityLogger.debug("Getting user by email", { email });
     return await db.select().from(user).where(eq(user.email, email));
-  } catch (_error) {
+  } catch (error) {
+    observabilityLogger.error("Failed to get user by email", error as Error, {
+      email,
+    });
     throw new ChatSDKError(
       "bad_request:database",
       "Failed to get user by email"
@@ -57,8 +62,12 @@ export async function createUser(email: string, password: string) {
   const hashedPassword = generateHashedPassword(password);
 
   try {
+    observabilityLogger.info("Creating new user", { email });
     return await db.insert(user).values({ email, password: hashedPassword });
-  } catch (_error) {
+  } catch (error) {
+    observabilityLogger.error("Failed to create user", error as Error, {
+      email,
+    });
     throw new ChatSDKError("bad_request:database", "Failed to create user");
   }
 }

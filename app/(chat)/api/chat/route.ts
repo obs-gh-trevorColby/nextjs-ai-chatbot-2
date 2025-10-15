@@ -38,6 +38,15 @@ import {
   updateChatLastContextById,
 } from "@/lib/db/queries";
 import { ChatSDKError } from "@/lib/errors";
+import {
+  createSpan,
+  instrumentAIOperation,
+  instrumentChatMessage,
+  instrumentDatabaseOperation,
+  instrumentHttpRequest,
+  observabilityLogger,
+  trackError,
+} from "@/lib/observability";
 import type { ChatMessage } from "@/lib/types";
 import type { AppUsage } from "@/lib/usage";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
@@ -85,249 +94,499 @@ export function getStreamContext() {
 }
 
 export async function POST(request: Request) {
+  const startTime = Date.now();
   let requestBody: PostRequestBody;
 
-  try {
-    const json = await request.json();
-    requestBody = postRequestBodySchema.parse(json);
-  } catch (_) {
-    return new ChatSDKError("bad_request:api").toResponse();
-  }
+  return createSpan("chat.post", async (span) => {
+    try {
+      const json = await request.json();
+      requestBody = postRequestBodySchema.parse(json);
 
-  try {
-    const {
-      id,
-      message,
-      selectedChatModel,
-      selectedVisibilityType,
-    }: {
-      id: string;
-      message: ChatMessage;
-      selectedChatModel: ChatModel["id"];
-      selectedVisibilityType: VisibilityType;
-    } = requestBody;
-
-    const session = await auth();
-
-    if (!session?.user) {
-      return new ChatSDKError("unauthorized:chat").toResponse();
-    }
-
-    const userType: UserType = session.user.type;
-
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 24,
-    });
-
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
-      return new ChatSDKError("rate_limit:chat").toResponse();
-    }
-
-    const chat = await getChatById({ id });
-
-    if (chat) {
-      if (chat.userId !== session.user.id) {
-        return new ChatSDKError("forbidden:chat").toResponse();
-      }
-    } else {
-      const title = await generateTitleFromUserMessage({
-        message,
+      span.setAttributes({
+        "http.method": "POST",
+        "http.route": "/api/chat",
+        "chat.id": requestBody.id,
+        "chat.model": requestBody.selectedChatModel,
       });
 
-      await saveChat({
+      observabilityLogger.info("Chat request started", {
+        chatId: requestBody.id,
+        model: requestBody.selectedChatModel,
+        messageLength: JSON.stringify(requestBody.message).length,
+      });
+    } catch (error) {
+      observabilityLogger.error("Invalid chat request body", error as Error);
+      const duration = Date.now() - startTime;
+      instrumentHttpRequest("POST", "/api/chat", 400, duration, {
+        error: "invalid_body",
+      });
+      return new ChatSDKError("bad_request:api").toResponse();
+    }
+
+    try {
+      const {
         id,
-        userId: session.user.id,
-        title,
-        visibility: selectedVisibilityType,
-      });
-    }
+        message,
+        selectedChatModel,
+        selectedVisibilityType,
+      }: {
+        id: string;
+        message: ChatMessage;
+        selectedChatModel: ChatModel["id"];
+        selectedVisibilityType: VisibilityType;
+      } = requestBody;
 
-    const messagesFromDb = await getMessagesByChatId({ id });
-    const uiMessages = [...convertToUIMessages(messagesFromDb), message];
+      const session = await instrumentDatabaseOperation("auth", "session", () =>
+        auth()
+      );
 
-    const { longitude, latitude, city, country } = geolocation(request);
-
-    const requestHints: RequestHints = {
-      longitude,
-      latitude,
-      city,
-      country,
-    };
-
-    await saveMessages({
-      messages: [
-        {
-          chatId: id,
-          id: message.id,
-          role: "user",
-          parts: message.parts,
-          attachments: [],
-          createdAt: new Date(),
-        },
-      ],
-    });
-
-    const streamId = generateUUID();
-    await createStreamId({ streamId, chatId: id });
-
-    let finalMergedUsage: AppUsage | undefined;
-
-    const stream = createUIMessageStream({
-      execute: ({ writer: dataStream }) => {
-        const result = streamText({
-          model: myProvider.languageModel(selectedChatModel),
-          system: systemPrompt({ selectedChatModel, requestHints }),
-          messages: convertToModelMessages(uiMessages),
-          stopWhen: stepCountIs(5),
-          experimental_activeTools:
-            selectedChatModel === "chat-model-reasoning"
-              ? []
-              : [
-                  "getWeather",
-                  "createDocument",
-                  "updateDocument",
-                  "requestSuggestions",
-                ],
-          experimental_transform: smoothStream({ chunking: "word" }),
-          tools: {
-            getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-            }),
-          },
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: "stream-text",
-          },
-          onFinish: async ({ usage }) => {
-            try {
-              const providers = await getTokenlensCatalog();
-              const modelId =
-                myProvider.languageModel(selectedChatModel).modelId;
-              if (!modelId) {
-                finalMergedUsage = usage;
-                dataStream.write({
-                  type: "data-usage",
-                  data: finalMergedUsage,
-                });
-                return;
-              }
-
-              if (!providers) {
-                finalMergedUsage = usage;
-                dataStream.write({
-                  type: "data-usage",
-                  data: finalMergedUsage,
-                });
-                return;
-              }
-
-              const summary = getUsage({ modelId, usage, providers });
-              finalMergedUsage = { ...usage, ...summary, modelId } as AppUsage;
-              dataStream.write({ type: "data-usage", data: finalMergedUsage });
-            } catch (err) {
-              console.warn("TokenLens enrichment failed", err);
-              finalMergedUsage = usage;
-              dataStream.write({ type: "data-usage", data: finalMergedUsage });
-            }
-          },
+      if (!session?.user) {
+        observabilityLogger.warn("Unauthorized chat request");
+        const duration = Date.now() - startTime;
+        instrumentHttpRequest("POST", "/api/chat", 401, duration, {
+          error: "unauthorized",
         });
+        return new ChatSDKError("unauthorized:chat").toResponse();
+      }
 
-        result.consumeStream();
+      const userType: UserType = session.user.type;
 
-        dataStream.merge(
-          result.toUIMessageStream({
-            sendReasoning: true,
+      span.setAttributes({
+        "user.id": session.user.id,
+        "user.type": userType,
+      });
+
+      const messageCount = await instrumentDatabaseOperation(
+        "select",
+        "message",
+        () =>
+          getMessageCountByUserId({
+            id: session.user.id,
+            differenceInHours: 24,
+          })
+      );
+
+      if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
+        observabilityLogger.warn("Rate limit exceeded", {
+          userId: session.user.id,
+          messageCount,
+          limit: entitlementsByUserType[userType].maxMessagesPerDay,
+        });
+        const duration = Date.now() - startTime;
+        instrumentHttpRequest("POST", "/api/chat", 429, duration, {
+          error: "rate_limit",
+        });
+        return new ChatSDKError("rate_limit:chat").toResponse();
+      }
+
+      const chat = await instrumentDatabaseOperation("select", "chat", () =>
+        getChatById({ id })
+      );
+
+      if (chat) {
+        if (chat.userId !== session.user.id) {
+          observabilityLogger.warn("Forbidden chat access attempt", {
+            chatId: id,
+            userId: session.user.id,
+            chatOwnerId: chat.userId,
+          });
+          const duration = Date.now() - startTime;
+          instrumentHttpRequest("POST", "/api/chat", 403, duration, {
+            error: "forbidden",
+          });
+          return new ChatSDKError("forbidden:chat").toResponse();
+        }
+
+        observabilityLogger.info("Continuing existing chat", {
+          chatId: id,
+          userId: session.user.id,
+        });
+      } else {
+        const title = await instrumentAIOperation(
+          "generate_title",
+          selectedChatModel,
+          () => generateTitleFromUserMessage({ message })
+        );
+
+        await instrumentDatabaseOperation("insert", "chat", () =>
+          saveChat({
+            id,
+            userId: session.user.id,
+            title,
+            visibility: selectedVisibilityType,
           })
         );
-      },
-      generateId: generateUUID,
-      onFinish: async ({ messages }) => {
-        await saveMessages({
-          messages: messages.map((currentMessage) => ({
-            id: currentMessage.id,
-            role: currentMessage.role,
-            parts: currentMessage.parts,
-            createdAt: new Date(),
-            attachments: [],
-            chatId: id,
-          })),
+
+        observabilityLogger.info("Created new chat", {
+          chatId: id,
+          userId: session.user.id,
+          title,
+          visibility: selectedVisibilityType,
         });
+      }
 
-        if (finalMergedUsage) {
-          try {
-            await updateChatLastContextById({
+      const messagesFromDb = await instrumentDatabaseOperation(
+        "select",
+        "message",
+        () => getMessagesByChatId({ id })
+      );
+      const uiMessages = [...convertToUIMessages(messagesFromDb), message];
+
+      const { longitude, latitude, city, country } = geolocation(request);
+
+      const requestHints: RequestHints = {
+        longitude,
+        latitude,
+        city,
+        country,
+      };
+
+      await instrumentDatabaseOperation("insert", "message", () =>
+        saveMessages({
+          messages: [
+            {
               chatId: id,
-              context: finalMergedUsage,
-            });
-          } catch (err) {
-            console.warn("Unable to persist last usage for chat", id, err);
+              id: message.id,
+              role: "user",
+              parts: message.parts,
+              attachments: [],
+              createdAt: new Date(),
+            },
+          ],
+        })
+      );
+
+      // Instrument the chat message
+      instrumentChatMessage("user", id, JSON.stringify(message.parts).length, {
+        userId: session.user.id,
+        model: selectedChatModel,
+      });
+
+      const streamId = generateUUID();
+      await instrumentDatabaseOperation("insert", "stream", () =>
+        createStreamId({ streamId, chatId: id })
+      );
+
+      let finalMergedUsage: AppUsage | undefined;
+
+      const stream = createUIMessageStream({
+        execute: ({ writer: dataStream }) => {
+          // Log the AI operation start
+          observabilityLogger.info("Starting AI stream text operation", {
+            chatId: id,
+            model: selectedChatModel,
+            messageCount: uiMessages.length,
+          });
+
+          const result = streamText({
+            model: myProvider.languageModel(selectedChatModel),
+            system: systemPrompt({ selectedChatModel, requestHints }),
+            messages: convertToModelMessages(uiMessages),
+            stopWhen: stepCountIs(5),
+            experimental_activeTools:
+              selectedChatModel === "chat-model-reasoning"
+                ? []
+                : [
+                    "getWeather",
+                    "createDocument",
+                    "updateDocument",
+                    "requestSuggestions",
+                  ],
+            experimental_transform: smoothStream({ chunking: "word" }),
+            tools: {
+              getWeather,
+              createDocument: createDocument({ session, dataStream }),
+              updateDocument: updateDocument({ session, dataStream }),
+              requestSuggestions: requestSuggestions({
+                session,
+                dataStream,
+              }),
+            },
+            experimental_telemetry: {
+              isEnabled: isProductionEnvironment,
+              functionId: "stream-text",
+            },
+            onFinish: async ({ usage }) => {
+              try {
+                observabilityLogger.info("AI stream completed", {
+                  chatId: id,
+                  model: selectedChatModel,
+                  usage,
+                });
+
+                const providers = await getTokenlensCatalog();
+                const modelId =
+                  myProvider.languageModel(selectedChatModel).modelId;
+                if (!modelId) {
+                  finalMergedUsage = usage;
+                  dataStream.write({
+                    type: "data-usage",
+                    data: finalMergedUsage,
+                  });
+                  return;
+                }
+
+                if (!providers) {
+                  finalMergedUsage = usage;
+                  dataStream.write({
+                    type: "data-usage",
+                    data: finalMergedUsage,
+                  });
+                  return;
+                }
+
+                const summary = getUsage({ modelId, usage, providers });
+                finalMergedUsage = {
+                  ...usage,
+                  ...summary,
+                  modelId,
+                } as AppUsage;
+                dataStream.write({
+                  type: "data-usage",
+                  data: finalMergedUsage,
+                });
+              } catch (err) {
+                observabilityLogger.error(
+                  "TokenLens enrichment failed",
+                  err as Error,
+                  {
+                    chatId: id,
+                    model: selectedChatModel,
+                  }
+                );
+                finalMergedUsage = usage;
+                dataStream.write({
+                  type: "data-usage",
+                  data: finalMergedUsage,
+                });
+              }
+            },
+          });
+
+          result.consumeStream();
+
+          dataStream.merge(
+            result.toUIMessageStream({
+              sendReasoning: true,
+            })
+          );
+        },
+        generateId: generateUUID,
+        onFinish: async ({ messages }) => {
+          await instrumentDatabaseOperation("insert", "message", () =>
+            saveMessages({
+              messages: messages.map((currentMessage) => ({
+                id: currentMessage.id,
+                role: currentMessage.role,
+                parts: currentMessage.parts,
+                createdAt: new Date(),
+                attachments: [],
+                chatId: id,
+              })),
+            })
+          );
+
+          // Instrument assistant messages
+          for (const msg of messages) {
+            if (msg.role === "assistant") {
+              instrumentChatMessage(
+                "assistant",
+                id,
+                JSON.stringify(msg.parts).length,
+                {
+                  userId: session.user.id,
+                  model: selectedChatModel,
+                }
+              );
+            }
           }
-        }
-      },
-      onError: () => {
-        return "Oops, an error occurred!";
-      },
-    });
 
-    // const streamContext = getStreamContext();
+          if (finalMergedUsage) {
+            try {
+              await instrumentDatabaseOperation("update", "chat", () =>
+                updateChatLastContextById({
+                  chatId: id,
+                  context: finalMergedUsage,
+                })
+              );
+            } catch (err) {
+              observabilityLogger.error(
+                "Unable to persist last usage for chat",
+                err as Error,
+                {
+                  chatId: id,
+                }
+              );
+            }
+          }
 
-    // if (streamContext) {
-    //   return new Response(
-    //     await streamContext.resumableStream(streamId, () =>
-    //       stream.pipeThrough(new JsonToSseTransformStream())
-    //     )
-    //   );
-    // }
+          const duration = Date.now() - startTime;
+          instrumentHttpRequest("POST", "/api/chat", 200, duration, {
+            chatId: id,
+            model: selectedChatModel,
+            messageCount: messages.length,
+          });
 
-    return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
-  } catch (error) {
-    const vercelId = request.headers.get("x-vercel-id");
+          observabilityLogger.info("Chat request completed successfully", {
+            chatId: id,
+            userId: session.user.id,
+            model: selectedChatModel,
+            duration,
+            messageCount: messages.length,
+          });
+        },
+        onError: (error) => {
+          observabilityLogger.error("Chat stream error", error as Error, {
+            chatId: id,
+            userId: session.user.id,
+            model: selectedChatModel,
+          });
+          trackError(error as Error, {
+            chatId: id,
+            userId: session.user.id,
+            model: selectedChatModel,
+          });
+          return "Oops, an error occurred!";
+        },
+      });
 
-    if (error instanceof ChatSDKError) {
-      return error.toResponse();
+      // const streamContext = getStreamContext();
+
+      // if (streamContext) {
+      //   return new Response(
+      //     await streamContext.resumableStream(streamId, () =>
+      //       stream.pipeThrough(new JsonToSseTransformStream())
+      //     )
+      //   );
+      // }
+
+      return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
+    } catch (error) {
+      const vercelId = request.headers.get("x-vercel-id");
+      const duration = Date.now() - startTime;
+
+      if (error instanceof ChatSDKError) {
+        observabilityLogger.error("Chat SDK error", error, {
+          chatId: requestBody?.id,
+          vercelId,
+        });
+        instrumentHttpRequest("POST", "/api/chat", error.statusCode, duration, {
+          error: error.type,
+          surface: error.surface,
+        });
+        return error.toResponse();
+      }
+
+      // Check for Vercel AI Gateway credit card error
+      if (
+        error instanceof Error &&
+        error.message?.includes(
+          "AI Gateway requires a valid credit card on file to service requests"
+        )
+      ) {
+        observabilityLogger.error("AI Gateway credit card error", error, {
+          chatId: requestBody?.id,
+          vercelId,
+        });
+        instrumentHttpRequest("POST", "/api/chat", 400, duration, {
+          error: "gateway_credit_card",
+        });
+        return new ChatSDKError("bad_request:activate_gateway").toResponse();
+      }
+
+      observabilityLogger.error("Unhandled error in chat API", error as Error, {
+        chatId: requestBody?.id,
+        vercelId,
+      });
+      trackError(error as Error, {
+        chatId: requestBody?.id,
+        vercelId,
+        endpoint: "/api/chat",
+      });
+      instrumentHttpRequest("POST", "/api/chat", 503, duration, {
+        error: "unhandled",
+      });
+      return new ChatSDKError("offline:chat").toResponse();
     }
-
-    // Check for Vercel AI Gateway credit card error
-    if (
-      error instanceof Error &&
-      error.message?.includes(
-        "AI Gateway requires a valid credit card on file to service requests"
-      )
-    ) {
-      return new ChatSDKError("bad_request:activate_gateway").toResponse();
-    }
-
-    console.error("Unhandled error in chat API:", error, { vercelId });
-    return new ChatSDKError("offline:chat").toResponse();
-  }
+  });
 }
 
 export async function DELETE(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get("id");
+  const startTime = Date.now();
 
-  if (!id) {
-    return new ChatSDKError("bad_request:api").toResponse();
-  }
+  return createSpan("chat.delete", async (span) => {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get("id");
 
-  const session = await auth();
+    if (!id) {
+      observabilityLogger.error("Delete chat request missing ID");
+      const duration = Date.now() - startTime;
+      instrumentHttpRequest("DELETE", "/api/chat", 400, duration, {
+        error: "missing_id",
+      });
+      return new ChatSDKError("bad_request:api").toResponse();
+    }
 
-  if (!session?.user) {
-    return new ChatSDKError("unauthorized:chat").toResponse();
-  }
+    span.setAttributes({
+      "http.method": "DELETE",
+      "http.route": "/api/chat",
+      "chat.id": id,
+    });
 
-  const chat = await getChatById({ id });
+    const session = await instrumentDatabaseOperation("auth", "session", () =>
+      auth()
+    );
 
-  if (chat?.userId !== session.user.id) {
-    return new ChatSDKError("forbidden:chat").toResponse();
-  }
+    if (!session?.user) {
+      observabilityLogger.warn("Unauthorized delete chat request", {
+        chatId: id,
+      });
+      const duration = Date.now() - startTime;
+      instrumentHttpRequest("DELETE", "/api/chat", 401, duration, {
+        error: "unauthorized",
+      });
+      return new ChatSDKError("unauthorized:chat").toResponse();
+    }
 
-  const deletedChat = await deleteChatById({ id });
+    span.setAttributes({
+      "user.id": session.user.id,
+    });
 
-  return Response.json(deletedChat, { status: 200 });
+    const chat = await instrumentDatabaseOperation("select", "chat", () =>
+      getChatById({ id })
+    );
+
+    if (chat?.userId !== session.user.id) {
+      observabilityLogger.warn("Forbidden delete chat attempt", {
+        chatId: id,
+        userId: session.user.id,
+        chatOwnerId: chat?.userId,
+      });
+      const duration = Date.now() - startTime;
+      instrumentHttpRequest("DELETE", "/api/chat", 403, duration, {
+        error: "forbidden",
+      });
+      return new ChatSDKError("forbidden:chat").toResponse();
+    }
+
+    const deletedChat = await instrumentDatabaseOperation(
+      "delete",
+      "chat",
+      () => deleteChatById({ id })
+    );
+
+    const duration = Date.now() - startTime;
+    instrumentHttpRequest("DELETE", "/api/chat", 200, duration, {
+      chatId: id,
+      userId: session.user.id,
+    });
+
+    observabilityLogger.info("Chat deleted successfully", {
+      chatId: id,
+      userId: session.user.id,
+      duration,
+    });
+
+    return Response.json(deletedChat, { status: 200 });
+  });
 }
