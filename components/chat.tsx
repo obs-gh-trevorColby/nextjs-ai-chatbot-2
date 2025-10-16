@@ -1,6 +1,8 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
+
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import { DefaultChatTransport } from "ai";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -25,6 +27,7 @@ import { ChatSDKError } from "@/lib/errors";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import type { AppUsage } from "@/lib/usage";
 import { fetcher, fetchWithErrorHandlers, generateUUID } from "@/lib/utils";
+import { logger, meter } from "@/otel-client";
 import { Artifact } from "./artifact";
 import { useDataStream } from "./data-stream-provider";
 import { Messages } from "./messages";
@@ -32,6 +35,15 @@ import { MultimodalInput } from "./multimodal-input";
 import { getChatHistoryPaginationKey } from "./sidebar-history";
 import { toast } from "./toast";
 import type { VisibilityType } from "./visibility-selector";
+
+// Initialize client-side metrics
+const chatInteractionCounter = meter.createCounter("chat_interactions_total", {
+  description: "Total number of chat interactions",
+});
+
+const messageCounter = meter.createCounter("chat_messages_total", {
+  description: "Total number of chat messages sent",
+});
 
 export function Chat({
   id,
@@ -57,6 +69,27 @@ export function Chat({
 
   const { mutate } = useSWRConfig();
   const { setDataStream } = useDataStream();
+
+  // Log chat component initialization
+  useEffect(() => {
+    logger.emit({
+      severityNumber: SeverityNumber.INFO,
+      severityText: "INFO",
+      body: "Chat component initialized",
+      attributes: {
+        "chat.id": id,
+        "chat.model": initialChatModel,
+        "chat.readonly": isReadonly,
+        "chat.message_count": initialMessages.length,
+      },
+    });
+
+    chatInteractionCounter.add(1, {
+      action: "chat_opened",
+      model: initialChatModel,
+      readonly: isReadonly.toString(),
+    });
+  }, [id, initialChatModel, isReadonly, initialMessages.length]);
 
   const [input, setInput] = useState<string>("");
   const [usage, setUsage] = useState<AppUsage | undefined>(initialLastContext);
@@ -104,8 +137,39 @@ export function Chat({
     },
     onFinish: () => {
       mutate(unstable_serialize(getChatHistoryPaginationKey));
+
+      messageCounter.add(1, {
+        model: currentModelIdRef.current,
+        status: "success",
+      });
+
+      logger.emit({
+        severityNumber: SeverityNumber.INFO,
+        severityText: "INFO",
+        body: "Message sent successfully",
+        attributes: {
+          "chat.id": id,
+          "chat.model": currentModelIdRef.current,
+        },
+      });
     },
     onError: (error) => {
+      messageCounter.add(1, {
+        model: currentModelIdRef.current,
+        status: "error",
+      });
+
+      logger.emit({
+        severityNumber: SeverityNumber.ERROR,
+        severityText: "ERROR",
+        body: "Error sending message",
+        attributes: {
+          "chat.id": id,
+          "chat.model": currentModelIdRef.current,
+          error: (error as Error).message,
+        },
+      });
+
       if (error instanceof ChatSDKError) {
         // Check if it's a credit card error
         if (
