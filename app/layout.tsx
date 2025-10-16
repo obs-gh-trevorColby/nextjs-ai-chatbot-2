@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "sonner";
+import { OtelClientInit } from "@/components/otel-client-init";
 import { ThemeProvider } from "@/components/theme-provider";
 
 import "./globals.css";
@@ -78,6 +79,7 @@ export default function RootLayout({
           disableTransitionOnChange
           enableSystem
         >
+          <OtelClientInit />
           <Toaster position="top-center" />
           <SessionProvider>{children}</SessionProvider>
         </ThemeProvider>
