@@ -42,6 +42,8 @@ import type { ChatMessage } from "@/lib/types";
 import type { AppUsage } from "@/lib/usage";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
 import { generateTitleFromUserMessage } from "../../actions";
+import { createRequestScopedLogger, PerformanceMonitor } from "@/lib/observability/middleware";
+import { createAILogger } from "@/lib/observability/logger";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
 export const maxDuration = 60;
@@ -53,9 +55,10 @@ const getTokenlensCatalog = cache(
     try {
       return await fetchModels();
     } catch (err) {
-      console.warn(
+      const logger = createAILogger('tokenlens', 'catalog-fetch');
+      logger.warn(
         "TokenLens: catalog fetch failed, using default catalog",
-        err
+        { error: err }
       );
       return; // tokenlens helpers will fall back to defaultCatalog
     }
@@ -71,12 +74,13 @@ export function getStreamContext() {
         waitUntil: after,
       });
     } catch (error: any) {
+      const logger = createRequestScopedLogger({} as any);
       if (error.message.includes("REDIS_URL")) {
-        console.log(
-          " > Resumable streams are disabled due to missing REDIS_URL"
+        logger.info(
+          "Resumable streams are disabled due to missing REDIS_URL"
         );
       } else {
-        console.error(error);
+        logger.error("Failed to create resumable stream context", error);
       }
     }
   }
@@ -85,12 +89,28 @@ export function getStreamContext() {
 }
 
 export async function POST(request: Request) {
+  const startTime = Date.now();
+  const logger = createRequestScopedLogger(request as any);
+  const performanceMonitor = new PerformanceMonitor('chat-api');
+
+  logger.info('Chat API request started', {
+    method: 'POST',
+    url: request.url
+  });
+
   let requestBody: PostRequestBody;
 
   try {
     const json = await request.json();
     requestBody = postRequestBodySchema.parse(json);
-  } catch (_) {
+
+    logger.debug('Request body parsed successfully', {
+      chatId: requestBody.id,
+      model: requestBody.selectedChatModel,
+      visibility: requestBody.selectedVisibilityType
+    });
+  } catch (error) {
+    logger.error('Failed to parse request body', error as Error);
     return new ChatSDKError("bad_request:api").toResponse();
   }
 
@@ -107,46 +127,90 @@ export async function POST(request: Request) {
       selectedVisibilityType: VisibilityType;
     } = requestBody;
 
-    const session = await auth();
+    const session = await performanceMonitor.measureAsync('auth', async () => {
+      return await auth();
+    });
 
     if (!session?.user) {
+      logger.warn('Unauthorized chat request - no session');
       return new ChatSDKError("unauthorized:chat").toResponse();
     }
 
     const userType: UserType = session.user.type;
+    logger.info('User authenticated', {
+      userId: session.user.id,
+      userType,
+      email: session.user.email
+    });
 
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 24,
+    const messageCount = await performanceMonitor.measureAsync('get-message-count', async () => {
+      return await getMessageCountByUserId({
+        id: session.user.id,
+        differenceInHours: 24,
+      });
+    });
+
+    logger.debug('Message count retrieved', {
+      userId: session.user.id,
+      messageCount,
+      limit: entitlementsByUserType[userType].maxMessagesPerDay
     });
 
     if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
+      logger.warn('Rate limit exceeded', {
+        userId: session.user.id,
+        messageCount,
+        limit: entitlementsByUserType[userType].maxMessagesPerDay
+      });
       return new ChatSDKError("rate_limit:chat").toResponse();
     }
 
-    const chat = await getChatById({ id });
+    const chat = await performanceMonitor.measureAsync('get-chat', async () => {
+      return await getChatById({ id });
+    });
 
     if (chat) {
       if (chat.userId !== session.user.id) {
+        logger.warn('Forbidden chat access attempt', {
+          chatId: id,
+          userId: session.user.id,
+          chatOwnerId: chat.userId
+        });
         return new ChatSDKError("forbidden:chat").toResponse();
       }
+      logger.debug('Existing chat found', { chatId: id, title: chat.title });
     } else {
-      const title = await generateTitleFromUserMessage({
-        message,
+      logger.info('Creating new chat', { chatId: id });
+
+      const title = await performanceMonitor.measureAsync('generate-title', async () => {
+        return await generateTitleFromUserMessage({ message });
       });
 
-      await saveChat({
-        id,
-        userId: session.user.id,
-        title,
-        visibility: selectedVisibilityType,
+      await performanceMonitor.measureAsync('save-chat', async () => {
+        return await saveChat({
+          id,
+          userId: session.user.id,
+          title,
+          visibility: selectedVisibilityType,
+        });
       });
+
+      logger.info('New chat created', { chatId: id, title });
     }
 
-    const messagesFromDb = await getMessagesByChatId({ id });
+    const messagesFromDb = await performanceMonitor.measureAsync('get-messages', async () => {
+      return await getMessagesByChatId({ id });
+    });
+
     const uiMessages = [...convertToUIMessages(messagesFromDb), message];
+    logger.debug('Messages loaded', {
+      chatId: id,
+      messageCount: messagesFromDb.length,
+      totalUIMessages: uiMessages.length
+    });
 
     const { longitude, latitude, city, country } = geolocation(request);
+    logger.debug('Geolocation extracted', { longitude, latitude, city, country });
 
     const requestHints: RequestHints = {
       longitude,
@@ -155,23 +219,40 @@ export async function POST(request: Request) {
       country,
     };
 
-    await saveMessages({
-      messages: [
-        {
-          chatId: id,
-          id: message.id,
-          role: "user",
-          parts: message.parts,
-          attachments: [],
-          createdAt: new Date(),
-        },
-      ],
+    await performanceMonitor.measureAsync('save-user-message', async () => {
+      return await saveMessages({
+        messages: [
+          {
+            chatId: id,
+            id: message.id,
+            role: "user",
+            parts: message.parts,
+            attachments: [],
+            createdAt: new Date(),
+          },
+        ],
+      });
+    });
+
+    logger.info('User message saved', {
+      chatId: id,
+      messageId: message.id,
+      partsCount: message.parts.length
     });
 
     const streamId = generateUUID();
     await createStreamId({ streamId, chatId: id });
+    logger.debug('Stream ID created', { streamId, chatId: id });
 
     let finalMergedUsage: AppUsage | undefined;
+    const aiLogger = createAILogger(selectedChatModel, 'stream-text');
+
+    aiLogger.info('Starting AI stream', {
+      chatId: id,
+      model: selectedChatModel,
+      messageCount: uiMessages.length,
+      hasTools: selectedChatModel !== "chat-model-reasoning"
+    });
 
     const stream = createUIMessageStream({
       execute: ({ writer: dataStream }) => {
@@ -204,11 +285,22 @@ export async function POST(request: Request) {
             functionId: "stream-text",
           },
           onFinish: async ({ usage }) => {
+            aiLogger.info('AI stream finished', {
+              chatId: id,
+              model: selectedChatModel,
+              usage: {
+                promptTokens: usage.promptTokens,
+                completionTokens: usage.completionTokens,
+                totalTokens: usage.totalTokens
+              }
+            });
+
             try {
               const providers = await getTokenlensCatalog();
               const modelId =
                 myProvider.languageModel(selectedChatModel).modelId;
               if (!modelId) {
+                aiLogger.warn('No model ID found for usage calculation', { model: selectedChatModel });
                 finalMergedUsage = usage;
                 dataStream.write({
                   type: "data-usage",
@@ -218,6 +310,7 @@ export async function POST(request: Request) {
               }
 
               if (!providers) {
+                aiLogger.warn('No providers catalog available for usage calculation');
                 finalMergedUsage = usage;
                 dataStream.write({
                   type: "data-usage",
@@ -228,9 +321,19 @@ export async function POST(request: Request) {
 
               const summary = getUsage({ modelId, usage, providers });
               finalMergedUsage = { ...usage, ...summary, modelId } as AppUsage;
+
+              aiLogger.info('Usage calculation completed', {
+                chatId: id,
+                modelId,
+                usage: finalMergedUsage
+              });
+
               dataStream.write({ type: "data-usage", data: finalMergedUsage });
             } catch (err) {
-              console.warn("TokenLens enrichment failed", err);
+              aiLogger.error("TokenLens enrichment failed", err as Error, {
+                chatId: id,
+                model: selectedChatModel
+              });
               finalMergedUsage = usage;
               dataStream.write({ type: "data-usage", data: finalMergedUsage });
             }
@@ -247,29 +350,58 @@ export async function POST(request: Request) {
       },
       generateId: generateUUID,
       onFinish: async ({ messages }) => {
-        await saveMessages({
-          messages: messages.map((currentMessage) => ({
-            id: currentMessage.id,
-            role: currentMessage.role,
-            parts: currentMessage.parts,
-            createdAt: new Date(),
-            attachments: [],
-            chatId: id,
-          })),
+        logger.info('Stream completion - saving messages', {
+          chatId: id,
+          messageCount: messages.length
+        });
+
+        await performanceMonitor.measureAsync('save-ai-messages', async () => {
+          return await saveMessages({
+            messages: messages.map((currentMessage) => ({
+              id: currentMessage.id,
+              role: currentMessage.role,
+              parts: currentMessage.parts,
+              createdAt: new Date(),
+              attachments: [],
+              chatId: id,
+            })),
+          });
         });
 
         if (finalMergedUsage) {
           try {
-            await updateChatLastContextById({
+            await performanceMonitor.measureAsync('update-chat-context', async () => {
+              return await updateChatLastContextById({
+                chatId: id,
+                context: finalMergedUsage,
+              });
+            });
+
+            logger.debug('Chat context updated with usage', {
               chatId: id,
-              context: finalMergedUsage,
+              usage: finalMergedUsage
             });
           } catch (err) {
-            console.warn("Unable to persist last usage for chat", id, err);
+            logger.error("Unable to persist last usage for chat", err as Error, {
+              chatId: id
+            });
           }
         }
+
+        const totalTime = Date.now() - startTime;
+        logger.info('Chat API request completed successfully', {
+          chatId: id,
+          totalTime,
+          model: selectedChatModel,
+          userId: session.user.id
+        });
       },
-      onError: () => {
+      onError: (error) => {
+        logger.error('Stream error occurred', error, {
+          chatId: id,
+          model: selectedChatModel,
+          userId: session.user.id
+        });
         return "Oops, an error occurred!";
       },
     });
@@ -287,6 +419,15 @@ export async function POST(request: Request) {
     return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
   } catch (error) {
     const vercelId = request.headers.get("x-vercel-id");
+    const totalTime = Date.now() - startTime;
+
+    logger.error("Chat API error", error as Error, {
+      chatId: requestBody?.id,
+      model: requestBody?.selectedChatModel,
+      userId: session?.user?.id,
+      vercelId,
+      totalTime
+    });
 
     if (error instanceof ChatSDKError) {
       return error.toResponse();
@@ -299,35 +440,69 @@ export async function POST(request: Request) {
         "AI Gateway requires a valid credit card on file to service requests"
       )
     ) {
+      logger.warn("AI Gateway credit card error", {
+        chatId: requestBody?.id,
+        userId: session?.user?.id
+      });
       return new ChatSDKError("bad_request:activate_gateway").toResponse();
     }
 
-    console.error("Unhandled error in chat API:", error, { vercelId });
+    logger.error("Unhandled error in chat API", error as Error, {
+      vercelId,
+      chatId: requestBody?.id,
+      totalTime
+    });
     return new ChatSDKError("offline:chat").toResponse();
   }
 }
 
 export async function DELETE(request: Request) {
+  const startTime = Date.now();
+  const logger = createRequestScopedLogger(request as any);
+  const performanceMonitor = new PerformanceMonitor('chat-api-delete');
+
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
 
+  logger.info('Chat deletion request started', { chatId: id });
+
   if (!id) {
+    logger.warn('Chat deletion request missing ID parameter');
     return new ChatSDKError("bad_request:api").toResponse();
   }
 
-  const session = await auth();
+  const session = await performanceMonitor.measureAsync('auth', async () => {
+    return await auth();
+  });
 
   if (!session?.user) {
+    logger.warn('Unauthorized chat deletion request');
     return new ChatSDKError("unauthorized:chat").toResponse();
   }
 
-  const chat = await getChatById({ id });
+  const chat = await performanceMonitor.measureAsync('get-chat', async () => {
+    return await getChatById({ id });
+  });
 
   if (chat?.userId !== session.user.id) {
+    logger.warn('Forbidden chat deletion attempt', {
+      chatId: id,
+      userId: session.user.id,
+      chatOwnerId: chat?.userId
+    });
     return new ChatSDKError("forbidden:chat").toResponse();
   }
 
-  const deletedChat = await deleteChatById({ id });
+  const deletedChat = await performanceMonitor.measureAsync('delete-chat', async () => {
+    return await deleteChatById({ id });
+  });
+
+  const totalTime = Date.now() - startTime;
+  logger.info('Chat deleted successfully', {
+    chatId: id,
+    userId: session.user.id,
+    totalTime
+  });
 
   return Response.json(deletedChat, { status: 200 });
 }
