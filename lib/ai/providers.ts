@@ -5,6 +5,7 @@ import {
   wrapLanguageModel,
 } from "ai";
 import { isTestEnvironment } from "../constants";
+import { createAILogger } from "../observability/logger";
 
 export const myProvider = isTestEnvironment
   ? (() => {

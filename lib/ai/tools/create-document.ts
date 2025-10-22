@@ -7,6 +7,7 @@ import {
 } from "@/lib/artifacts/server";
 import type { ChatMessage } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
+import { createAIInstrumentationLogger } from "../../observability/ai-instrumentation";
 
 type CreateDocumentProps = {
   session: Session;
@@ -23,6 +24,15 @@ export const createDocument = ({ session, dataStream }: CreateDocumentProps) =>
     }),
     execute: async ({ title, kind }) => {
       const id = generateUUID();
+      const logger = createAIInstrumentationLogger('artifact-model', 'document-creation');
+
+      logger.logOperationStart('document-creation', {
+        userId: session.user?.id,
+        documentId: id,
+        title,
+        kind,
+        tool: 'create-document'
+      });
 
       dataStream.write({
         type: "data-kind",
@@ -54,23 +64,52 @@ export const createDocument = ({ session, dataStream }: CreateDocumentProps) =>
       );
 
       if (!documentHandler) {
-        throw new Error(`No document handler found for kind: ${kind}`);
+        const error = new Error(`No document handler found for kind: ${kind}`);
+        logger.logOperationError('document-creation', id, {
+          userId: session.user?.id,
+          documentId: id,
+          title,
+          kind
+        }, error);
+        throw error;
       }
 
-      await documentHandler.onCreateDocument({
-        id,
-        title,
-        dataStream,
-        session,
-      });
+      try {
+        await documentHandler.onCreateDocument({
+          id,
+          title,
+          dataStream,
+          session,
+        });
 
-      dataStream.write({ type: "data-finish", data: null, transient: true });
+        dataStream.write({ type: "data-finish", data: null, transient: true });
 
-      return {
-        id,
-        title,
-        kind,
-        content: "A document was created and is now visible to the user.",
-      };
+        const result = {
+          id,
+          title,
+          kind,
+          content: "A document was created and is now visible to the user.",
+        };
+
+        logger.logOperationComplete('document-creation', id, {
+          userId: session.user?.id,
+          documentId: id,
+          title,
+          kind,
+          tool: 'create-document'
+        }, {
+          responseLength: result.content.length
+        }, result.content);
+
+        return result;
+      } catch (error) {
+        logger.logOperationError('document-creation', id, {
+          userId: session.user?.id,
+          documentId: id,
+          title,
+          kind
+        }, error as Error);
+        throw error;
+      }
     },
   });
