@@ -4,6 +4,8 @@ import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 
 import "./globals.css";
+import "./enhanced-ui.css";
+import "./theme-enhancements.css";
 import { SessionProvider } from "next-auth/react";
 
 export const metadata: Metadata = {

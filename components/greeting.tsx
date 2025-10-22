@@ -8,7 +8,7 @@ export const Greeting = () => {
     >
       <motion.div
         animate={{ opacity: 1, y: 0 }}
-        className="text-gradient font-semibold text-xl md:text-2xl text-shadow"
+        className="bg-gradient-primary bg-clip-text text-transparent font-semibold text-3xl md:text-4xl text-shadow"
         exit={{ opacity: 0, y: 10 }}
         initial={{ opacity: 0, y: 10 }}
         transition={{ delay: 0.5 }}
@@ -17,12 +17,23 @@ export const Greeting = () => {
       </motion.div>
       <motion.div
         animate={{ opacity: 1, y: 0 }}
-        className="text-xl text-muted-foreground md:text-2xl"
+        className="text-xl text-muted-foreground md:text-2xl mt-2"
         exit={{ opacity: 0, y: 10 }}
         initial={{ opacity: 0, y: 10 }}
         transition={{ delay: 0.6 }}
       >
         How can I help you today?
+      </motion.div>
+      <motion.div
+        animate={{ opacity: 1, y: 0 }}
+        className="glass-card p-6 mt-8 rounded-2xl"
+        exit={{ opacity: 0, y: 10 }}
+        initial={{ opacity: 0, y: 10 }}
+        transition={{ delay: 0.8 }}
+      >
+        <p className="text-sm text-muted-foreground text-center">
+          Start a conversation by typing your message below. I'm here to help with any questions or tasks you have.
+        </p>
       </motion.div>
     </div>
   );
