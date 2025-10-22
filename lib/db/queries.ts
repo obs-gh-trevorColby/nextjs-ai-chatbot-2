@@ -19,6 +19,8 @@ import type { VisibilityType } from "@/components/visibility-selector";
 import { ChatSDKError } from "../errors";
 import type { AppUsage } from "../usage";
 import { generateUUID } from "../utils";
+import { createDatabaseLogger, PerformanceMonitor } from "../observability/middleware";
+import { trace } from "@opentelemetry/api";
 import {
   type Chat,
   chat,
@@ -42,25 +44,92 @@ import { generateHashedPassword } from "./utils";
 const client = postgres(process.env.POSTGRES_URL!);
 const db = drizzle(client);
 
+// Database logger and performance monitor
+const dbLogger = createDatabaseLogger();
+const dbPerformanceMonitor = new PerformanceMonitor('database');
+
+// Database operation wrapper with logging and tracing
+async function withDatabaseLogging<T>(
+  operation: string,
+  query: () => Promise<T>,
+  metadata?: Record<string, any>
+): Promise<T> {
+  const tracer = trace.getTracer('ai-chatbot-database');
+
+  return tracer.startActiveSpan(`db-${operation}`, async (span) => {
+    const startTime = Date.now();
+
+    try {
+      span.setAttributes({
+        'db.operation': operation,
+        'db.system': 'postgresql',
+        ...metadata
+      });
+
+      dbLogger.debug(`Starting database operation: ${operation}`, metadata);
+
+      const result = await query();
+      const duration = Date.now() - startTime;
+
+      span.setAttributes({
+        'db.duration': duration
+      });
+
+      dbLogger.info(`Database operation completed: ${operation}`, {
+        ...metadata,
+        duration
+      });
+
+      return result;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const err = error as Error;
+
+      span.recordException(err);
+      span.setStatus({
+        code: 2, // ERROR
+        message: err.message
+      });
+
+      dbLogger.error(`Database operation failed: ${operation}`, err, {
+        ...metadata,
+        duration
+      });
+
+      throw error;
+    } finally {
+      span.end();
+    }
+  });
+}
+
 export async function getUser(email: string): Promise<User[]> {
-  try {
-    return await db.select().from(user).where(eq(user.email, email));
-  } catch (_error) {
+  return withDatabaseLogging(
+    'get-user',
+    async () => {
+      return await db.select().from(user).where(eq(user.email, email));
+    },
+    { email }
+  ).catch((_error) => {
     throw new ChatSDKError(
       "bad_request:database",
       "Failed to get user by email"
     );
-  }
+  });
 }
 
 export async function createUser(email: string, password: string) {
   const hashedPassword = generateHashedPassword(password);
 
-  try {
-    return await db.insert(user).values({ email, password: hashedPassword });
-  } catch (_error) {
+  return withDatabaseLogging(
+    'create-user',
+    async () => {
+      return await db.insert(user).values({ email, password: hashedPassword });
+    },
+    { email }
+  ).catch((_error) => {
     throw new ChatSDKError("bad_request:database", "Failed to create user");
-  }
+  });
 }
 
 export async function createGuestUser() {
@@ -91,17 +160,21 @@ export async function saveChat({
   title: string;
   visibility: VisibilityType;
 }) {
-  try {
-    return await db.insert(chat).values({
-      id,
-      createdAt: new Date(),
-      userId,
-      title,
-      visibility,
-    });
-  } catch (_error) {
+  return withDatabaseLogging(
+    'save-chat',
+    async () => {
+      return await db.insert(chat).values({
+        id,
+        createdAt: new Date(),
+        userId,
+        title,
+        visibility,
+      });
+    },
+    { chatId: id, userId, title, visibility }
+  ).catch((_error) => {
     throw new ChatSDKError("bad_request:database", "Failed to save chat");
-  }
+  });
 }
 
 export async function deleteChatById({ id }: { id: string }) {
@@ -213,11 +286,19 @@ export async function getChatById({ id }: { id: string }) {
 }
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
-  try {
-    return await db.insert(message).values(messages);
-  } catch (_error) {
+  return withDatabaseLogging(
+    'save-messages',
+    async () => {
+      return await db.insert(message).values(messages);
+    },
+    {
+      messageCount: messages.length,
+      chatIds: [...new Set(messages.map(m => m.chatId))],
+      roles: [...new Set(messages.map(m => m.role))]
+    }
+  ).catch((_error) => {
     throw new ChatSDKError("bad_request:database", "Failed to save messages");
-  }
+  });
 }
 
 export async function getMessagesByChatId({ id }: { id: string }) {
