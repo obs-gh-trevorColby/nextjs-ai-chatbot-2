@@ -55,7 +55,7 @@ const PurePreviewMessage = ({
   return (
     <motion.div
       animate={{ opacity: 1 }}
-      className="group/message w-full"
+      className="message-bubble group/message w-full slide-up"
       data-role={message.role}
       data-testid={`message-${message.role}`}
       initial={{ opacity: 0 }}
@@ -315,7 +315,7 @@ export const ThinkingMessage = () => {
   return (
     <motion.div
       animate={{ opacity: 1 }}
-      className="group/message w-full"
+      className="message-bubble loading-shimmer group/message w-full"
       data-role={role}
       data-testid="message-assistant-loading"
       initial={{ opacity: 0 }}

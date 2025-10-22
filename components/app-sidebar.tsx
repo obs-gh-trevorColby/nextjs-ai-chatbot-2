@@ -22,25 +22,25 @@ export function AppSidebar({ user }: { user: User | undefined }) {
   const { setOpenMobile } = useSidebar();
 
   return (
-    <Sidebar className="group-data-[side=left]:border-r-0">
+    <Sidebar className="sidebar-enhanced group-data-[side=left]:border-r-0">
       <SidebarHeader>
         <SidebarMenu>
           <div className="flex flex-row items-center justify-between">
             <Link
-              className="flex flex-row items-center gap-3"
+              className="flex flex-row items-center gap-3 sidebar-item"
               href="/"
               onClick={() => {
                 setOpenMobile(false);
               }}
             >
-              <span className="cursor-pointer rounded-md px-2 font-semibold text-lg hover:bg-muted">
+              <span className="text-gradient cursor-pointer rounded-md px-2 font-semibold text-lg hover:bg-muted interactive-element">
                 Chatbot
               </span>
             </Link>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  className="h-8 p-1 md:h-fit md:p-2"
+                  className="btn-secondary h-8 p-1 md:h-fit md:p-2 interactive-element"
                   onClick={() => {
                     setOpenMobile(false);
                     router.push("/");
