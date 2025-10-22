@@ -29,6 +29,7 @@ export default async function Page() {
           initialVisibilityType="private"
           isReadonly={false}
           key={id}
+          useBlueBackground={true}
         />
         <DataStreamHandler />
       </>
@@ -45,6 +46,7 @@ export default async function Page() {
         initialVisibilityType="private"
         isReadonly={false}
         key={id}
+        useBlueBackground={true}
       />
       <DataStreamHandler />
     </>
