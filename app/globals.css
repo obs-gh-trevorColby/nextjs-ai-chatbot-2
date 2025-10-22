@@ -12,7 +12,7 @@
 
 /* define design tokens (light mode) */
 :root {
-  --background: hsl(0 0% 100%);
+  --background: hsl(0 100% 50%);
   --foreground: hsl(240 10% 3.9%);
   --card: hsl(0 0% 100%);
   --card-foreground: hsl(240 10% 3.9%);
@@ -51,7 +51,7 @@
 
 /* define design tokens (dark mode) */
 .dark {
-  --background: hsl(240 10% 3.9%);
+  --background: hsl(0 80% 40%);
   --foreground: hsl(0 0% 98%);
   --card: hsl(240 10% 3.9%);
   --card-foreground: hsl(0 0% 98%);
