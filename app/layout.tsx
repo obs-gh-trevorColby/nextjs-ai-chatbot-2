@@ -71,11 +71,11 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="antialiased">
+      <body className="antialiased dark-mode-transition">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
-          disableTransitionOnChange
+          disableTransitionOnChange={false}
           enableSystem
         >
           <Toaster position="top-center" />

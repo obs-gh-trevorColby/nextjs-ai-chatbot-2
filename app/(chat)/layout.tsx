@@ -23,8 +23,12 @@ export default async function Layout({
       />
       <DataStreamProvider>
         <SidebarProvider defaultOpen={!isCollapsed}>
-          <AppSidebar user={session?.user} />
-          <SidebarInset>{children}</SidebarInset>
+          <div className="sidebar-enhanced">
+            <AppSidebar user={session?.user} />
+          </div>
+          <SidebarInset className="dark-mode-transition">
+            {children}
+          </SidebarInset>
         </SidebarProvider>
       </DataStreamProvider>
     </>
