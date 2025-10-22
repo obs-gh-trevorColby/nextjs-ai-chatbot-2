@@ -156,7 +156,7 @@ export function Chat({
 
   return (
     <>
-      <div className="chat-container overscroll-behavior-contain flex h-dvh min-w-0 touch-pan-y flex-col bg-gradient-primary dark-mode-transition">
+      <div className="chat-container mobile-chat-container overscroll-behavior-contain flex h-dvh min-w-0 touch-pan-y flex-col bg-gradient-primary dark-mode-transition mobile-safe-top mobile-safe-bottom">
         <ChatHeader
           chatId={id}
           isReadonly={isReadonly}
@@ -175,7 +175,7 @@ export function Chat({
           votes={votes}
         />
 
-        <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 bg-background/80 backdrop-blur-md px-2 pb-3 md:px-4 md:pb-4 dark-mode-transition">
+        <div className="mobile-chat-input sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 bg-background/80 backdrop-blur-md px-2 pb-3 md:px-4 md:pb-4 dark-mode-transition mobile-safe-bottom">
           {!isReadonly && (
             <div className="chat-input-container w-full animate-fade-in-up">
               <MultimodalInput
