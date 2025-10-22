@@ -1,0 +1,247 @@
+/* Enhanced Component Styling */
+
+/* Enhanced Button Variants */
+.btn-primary-enhanced {
+  @apply relative overflow-hidden bg-gradient-to-r from-primary via-primary to-primary/90 text-primary-foreground shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300 rounded-lg;
+}
+
+.btn-primary-enhanced::before {
+  content: '';
+  @apply absolute inset-0 bg-gradient-to-r from-white/20 via-transparent to-white/20 translate-x-[-100%] hover:translate-x-[100%] transition-transform duration-700 pointer-events-none;
+}
+
+.btn-secondary-enhanced {
+  @apply relative overflow-hidden bg-gradient-to-r from-secondary to-secondary/90 text-secondary-foreground border border-border/50 shadow-md hover:shadow-lg transform hover:scale-105 transition-all duration-300 rounded-lg;
+}
+
+.btn-ghost-enhanced {
+  @apply relative overflow-hidden bg-transparent hover:bg-accent/50 text-foreground border border-transparent hover:border-border/50 shadow-sm hover:shadow-md transition-all duration-300 rounded-lg;
+}
+
+.btn-destructive-enhanced {
+  @apply relative overflow-hidden bg-gradient-to-r from-destructive to-destructive/90 text-destructive-foreground shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300 rounded-lg;
+}
+
+/* Enhanced Input Components */
+.input-field-enhanced {
+  @apply relative bg-background/90 border border-input/60 rounded-lg shadow-sm hover:shadow-md focus:shadow-lg focus:border-primary/50 transition-all duration-300 backdrop-blur-sm px-3 py-2 text-sm;
+}
+
+.input-field-enhanced:focus {
+  @apply outline-none ring-2 ring-primary/20 ring-offset-2 ring-offset-background;
+}
+
+.textarea-enhanced {
+  @apply relative bg-background/90 border border-input/60 rounded-lg shadow-sm hover:shadow-md focus:shadow-lg focus:border-primary/50 transition-all duration-300 backdrop-blur-sm px-3 py-2 text-sm resize-none;
+}
+
+.textarea-enhanced:focus {
+  @apply outline-none ring-2 ring-primary/20 ring-offset-2 ring-offset-background;
+}
+
+/* Enhanced Select Components */
+.select-enhanced {
+  @apply relative bg-background/90 border border-input/60 rounded-lg shadow-sm hover:shadow-md focus:shadow-lg focus:border-primary/50 transition-all duration-300 backdrop-blur-sm;
+}
+
+.select-trigger-enhanced {
+  @apply flex h-10 w-full items-center justify-between rounded-lg border border-input/60 bg-background/90 px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 backdrop-blur-sm transition-all duration-300;
+}
+
+/* Enhanced Card Components */
+.card-modern {
+  @apply relative bg-card/90 backdrop-blur-sm border border-border/50 rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden;
+}
+
+.card-modern::before {
+  content: '';
+  @apply absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5 opacity-0 hover:opacity-100 transition-opacity duration-300 pointer-events-none;
+}
+
+.card-header-enhanced {
+  @apply relative p-6 pb-4;
+}
+
+.card-content-enhanced {
+  @apply relative p-6 pt-0;
+}
+
+.card-footer-enhanced {
+  @apply relative p-6 pt-4 border-t border-border/30;
+}
+
+/* Enhanced Navigation Components */
+.nav-link-enhanced {
+  @apply relative px-3 py-2 rounded-lg text-foreground/80 hover:text-foreground hover:bg-accent/50 transition-all duration-300 flex items-center gap-2;
+}
+
+.nav-link-enhanced.active {
+  @apply text-primary bg-primary/10 shadow-sm;
+}
+
+.nav-link-enhanced::before {
+  content: '';
+  @apply absolute inset-0 bg-gradient-to-r from-primary/10 via-transparent to-primary/10 opacity-0 hover:opacity-100 transition-opacity duration-300 rounded-lg pointer-events-none;
+}
+
+/* Enhanced Badge Components */
+.badge-modern {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20 shadow-sm backdrop-blur-sm;
+}
+
+.badge-success {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-500/10 text-green-600 border border-green-500/20 shadow-sm backdrop-blur-sm;
+}
+
+.badge-warning {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-500/10 text-yellow-600 border border-yellow-500/20 shadow-sm backdrop-blur-sm;
+}
+
+.badge-error {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-600 border border-red-500/20 shadow-sm backdrop-blur-sm;
+}
+
+/* Enhanced Modal Components */
+.modal-backdrop {
+  @apply fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4;
+}
+
+.modal-panel {
+  @apply relative bg-card/95 backdrop-blur-md border border-border/60 rounded-xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden;
+}
+
+.modal-header {
+  @apply p-6 pb-4 border-b border-border/30;
+}
+
+.modal-body {
+  @apply p-6;
+}
+
+.modal-footer {
+  @apply p-6 pt-4 border-t border-border/30 flex justify-end gap-3;
+}
+
+/* Enhanced Tooltip Components */
+.tooltip-modern {
+  @apply bg-popover/95 backdrop-blur-md border border-border/60 text-popover-foreground rounded-lg shadow-lg px-3 py-2 text-sm max-w-xs;
+}
+
+/* Enhanced Loading Components */
+.loading-spinner {
+  @apply animate-spin rounded-full h-4 w-4 border-2 border-primary/20 border-t-primary;
+}
+
+.loading-skeleton {
+  @apply animate-pulse bg-muted/50 rounded-md;
+}
+
+.loading-shimmer-effect {
+  @apply relative overflow-hidden bg-muted/30 rounded-md;
+}
+
+.loading-shimmer-effect::before {
+  content: '';
+  @apply absolute inset-0 bg-gradient-to-r from-transparent via-foreground/10 to-transparent translate-x-[-100%];
+  animation: shimmer 2s infinite;
+}
+
+/* Enhanced Progress Components */
+.progress-bar-modern {
+  @apply relative bg-secondary/50 rounded-full overflow-hidden shadow-inner h-2;
+}
+
+.progress-fill-modern {
+  @apply bg-gradient-to-r from-primary to-primary/80 h-full rounded-full shadow-sm transition-all duration-500 ease-out;
+}
+
+/* Enhanced Divider Components */
+.divider-modern {
+  @apply relative border-0 h-px bg-gradient-to-r from-transparent via-border to-transparent my-6;
+}
+
+.divider-modern::before {
+  content: '';
+  @apply absolute inset-0 bg-gradient-to-r from-transparent via-primary/20 to-transparent;
+}
+
+/* Enhanced Status Indicators */
+.status-indicator {
+  @apply relative inline-flex items-center gap-2;
+}
+
+.status-dot {
+  @apply w-2 h-2 rounded-full;
+}
+
+.status-online .status-dot {
+  @apply bg-green-500 shadow-sm;
+}
+
+.status-offline .status-dot {
+  @apply bg-gray-400 shadow-sm;
+}
+
+.status-busy .status-dot {
+  @apply bg-red-500 shadow-sm;
+}
+
+.status-away .status-dot {
+  @apply bg-yellow-500 shadow-sm;
+}
+
+/* Enhanced Animation Classes */
+.animate-bounce-subtle {
+  animation: bounce-subtle 2s infinite;
+}
+
+@keyframes bounce-subtle {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-fade-in-delayed {
+  animation: fadeIn 0.6s ease-out 0.3s both;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Enhanced Focus States */
+.focus-ring-enhanced:focus-visible {
+  @apply outline-none ring-2 ring-primary/50 ring-offset-2 ring-offset-background;
+}
+
+.focus-ring-enhanced:focus-visible::before {
+  content: '';
+  @apply absolute inset-0 bg-primary/5 rounded-md pointer-events-none;
+}
+
+/* Enhanced Hover Effects */
+.hover-lift-subtle {
+  @apply transform hover:scale-[1.01] hover:-translate-y-0.5 transition-all duration-300;
+}
+
+.hover-glow {
+  @apply transition-all duration-300;
+}
+
+.hover-glow:hover {
+  box-shadow: 0 0 20px var(--primary), 0 0 40px var(--primary), 0 0 60px var(--primary);
+}
