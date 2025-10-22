@@ -71,14 +71,14 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="antialiased">
+      <body className="smooth-scroll antialiased">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
           disableTransitionOnChange
           enableSystem
         >
-          <Toaster position="top-center" />
+          <Toaster className="animate-scale-in" position="top-center" />
           <SessionProvider>{children}</SessionProvider>
         </ThemeProvider>
       </body>

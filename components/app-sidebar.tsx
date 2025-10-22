@@ -23,24 +23,24 @@ export function AppSidebar({ user }: { user: User | undefined }) {
 
   return (
     <Sidebar className="sidebar-container group-data-[side=left]:border-r-0">
-      <SidebarHeader className="glass-effect border-b border-sidebar-border/30">
+      <SidebarHeader className="glass-effect border-sidebar-border/30 border-b">
         <SidebarMenu>
           <div className="flex flex-row items-center justify-between">
             <Link
-              className="flex flex-row items-center gap-3 hover-lift focus-visible-enhanced rounded-lg"
+              className="hover-lift focus-visible-enhanced flex flex-row items-center gap-3 rounded-lg"
               href="/"
               onClick={() => {
                 setOpenMobile(false);
               }}
             >
-              <span className="cursor-pointer rounded-md px-2 font-semibold text-lg text-gradient-primary hover:bg-sidebar-accent/50 transition-all duration-200">
+              <span className="cursor-pointer rounded-md px-2 font-semibold text-gradient-primary text-lg transition-all duration-200 hover:bg-sidebar-accent/50">
                 Chatbot
               </span>
             </Link>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  className="btn-ghost h-8 p-1 md:h-fit md:p-2 hover-scale focus-visible-enhanced"
+                  className="btn-ghost hover-scale focus-visible-enhanced h-8 p-1 md:h-fit md:p-2"
                   onClick={() => {
                     setOpenMobile(false);
                     router.push("/");
@@ -52,7 +52,10 @@ export function AppSidebar({ user }: { user: User | undefined }) {
                   <PlusIcon />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent align="end" className="tooltip-content hidden md:block">
+              <TooltipContent
+                align="end"
+                className="tooltip-content hidden md:block"
+              >
                 New Chat
               </TooltipContent>
             </Tooltip>
@@ -62,7 +65,7 @@ export function AppSidebar({ user }: { user: User | undefined }) {
       <SidebarContent className="custom-scrollbar">
         <SidebarHistory user={user} />
       </SidebarContent>
-      <SidebarFooter className="glass-effect border-t border-sidebar-border/30">
+      <SidebarFooter className="glass-effect border-sidebar-border/30 border-t">
         {user && <SidebarUserNav user={user} />}
       </SidebarFooter>
     </Sidebar>

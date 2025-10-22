@@ -25,14 +25,14 @@ function PureChatHeader({
   const { width: windowWidth } = useWindowSize();
 
   return (
-    <header className="sticky top-0 flex items-center gap-2 glass-effect-strong px-2 py-1.5 md:px-2 z-20 border-b border-border/30">
+    <header className="glass-effect-strong sticky top-0 z-20 flex items-center gap-2 border-border/30 border-b px-2 py-1.5 md:px-2">
       <div className="interactive-element">
         <SidebarToggle />
       </div>
 
       {(!open || windowWidth < 768) && (
         <Button
-          className="btn-secondary order-2 ml-auto h-8 px-2 md:order-1 md:ml-0 md:h-fit md:px-2 hover-lift focus-visible-enhanced"
+          className="btn-secondary hover-lift focus-visible-enhanced order-2 ml-auto h-8 px-2 md:order-1 md:ml-0 md:h-fit md:px-2"
           onClick={() => {
             router.push("/");
             router.refresh();

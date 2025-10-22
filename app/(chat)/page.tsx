@@ -20,7 +20,7 @@ export default async function Page() {
 
   if (!modelIdFromCookie) {
     return (
-      <>
+      <div className="animate-fade-in">
         <Chat
           autoResume={false}
           id={id}
@@ -31,12 +31,12 @@ export default async function Page() {
           key={id}
         />
         <DataStreamHandler />
-      </>
+      </div>
     );
   }
 
   return (
-    <>
+    <div className="animate-fade-in">
       <Chat
         autoResume={false}
         id={id}
@@ -47,6 +47,6 @@ export default async function Page() {
         key={id}
       />
       <DataStreamHandler />
-    </>
+    </div>
   );
 }

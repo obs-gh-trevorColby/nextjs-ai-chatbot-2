@@ -60,7 +60,7 @@ function PureMessages({
 
   return (
     <div
-      className="overscroll-behavior-contain -webkit-overflow-scrolling-touch flex-1 touch-pan-y overflow-y-scroll custom-scrollbar smooth-scroll"
+      className="overscroll-behavior-contain -webkit-overflow-scrolling-touch custom-scrollbar smooth-scroll flex-1 touch-pan-y overflow-y-scroll"
       ref={messagesContainerRef}
       style={{ overflowAnchor: "none" }}
     >
@@ -74,10 +74,10 @@ function PureMessages({
 
           {messages.map((message, index) => (
             <div
-              key={message.id}
               className={`message-container animate-fade-in-up ${
                 message.role === "user" ? "user-message" : "assistant-message"
               }`}
+              key={message.id}
               style={{ animationDelay: `${index * 0.1}s` }}
             >
               <PreviewMessage

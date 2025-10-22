@@ -300,7 +300,7 @@ function PureMultimodalInput({
         <div className="flex flex-row items-start gap-1 sm:gap-2">
           <PromptInputTextarea
             autoFocus
-            className="prompt-textarea grow resize-none border-0! border-none! bg-transparent p-2 text-sm outline-none ring-0 [-ms-overflow-style:none] [scrollbar-width:none] placeholder:text-muted-foreground/70 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 [&::-webkit-scrollbar]:hidden transition-all duration-200"
+            className="prompt-textarea grow resize-none border-0! border-none! bg-transparent p-2 text-sm outline-none ring-0 transition-all duration-200 [-ms-overflow-style:none] [scrollbar-width:none] placeholder:text-muted-foreground/70 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 [&::-webkit-scrollbar]:hidden"
             data-testid="multimodal-input"
             disableAutoResize={true}
             maxHeight={200}
@@ -330,7 +330,7 @@ function PureMultimodalInput({
             <StopButton setMessages={setMessages} stop={stop} />
           ) : (
             <PromptInputSubmit
-              className="btn-primary size-8 rounded-full transition-all duration-200 hover-scale active-scale focus-visible-enhanced disabled:bg-muted disabled:text-muted-foreground disabled:hover:scale-100"
+              className="btn-primary hover-scale active-scale focus-visible-enhanced size-8 rounded-full transition-all duration-200 disabled:bg-muted disabled:text-muted-foreground disabled:hover:scale-100"
               disabled={!input.trim() || uploadQueue.length > 0}
               status={status}
             >

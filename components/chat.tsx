@@ -179,7 +179,7 @@ export function Chat({
           />
         </div>
 
-        <div className="sticky bottom-0 z-10 mx-auto flex w-full max-w-4xl gap-2 border-t-0 glass-effect px-2 pb-3 md:px-4 md:pb-4 animate-slide-in-bottom">
+        <div className="glass-effect sticky bottom-0 z-10 mx-auto flex w-full max-w-4xl animate-slide-in-bottom gap-2 border-t-0 px-2 pb-3 md:px-4 md:pb-4">
           {!isReadonly && (
             <div className="prompt-input-container w-full">
               <MultimodalInput

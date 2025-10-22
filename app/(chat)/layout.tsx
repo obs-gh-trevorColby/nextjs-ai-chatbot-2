@@ -24,7 +24,7 @@ export default async function Layout({
       <DataStreamProvider>
         <SidebarProvider defaultOpen={!isCollapsed}>
           <AppSidebar user={session?.user} />
-          <SidebarInset>{children}</SidebarInset>
+          <SidebarInset className="animate-fade-in">{children}</SidebarInset>
         </SidebarProvider>
       </DataStreamProvider>
     </>
