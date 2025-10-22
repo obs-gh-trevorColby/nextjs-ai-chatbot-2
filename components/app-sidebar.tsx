@@ -22,25 +22,25 @@ export function AppSidebar({ user }: { user: User | undefined }) {
   const { setOpenMobile } = useSidebar();
 
   return (
-    <Sidebar className="group-data-[side=left]:border-r-0">
-      <SidebarHeader>
+    <Sidebar className="sidebar-container group-data-[side=left]:border-r-0">
+      <SidebarHeader className="glass-effect border-b border-sidebar-border/30">
         <SidebarMenu>
           <div className="flex flex-row items-center justify-between">
             <Link
-              className="flex flex-row items-center gap-3"
+              className="flex flex-row items-center gap-3 hover-lift focus-visible-enhanced rounded-lg"
               href="/"
               onClick={() => {
                 setOpenMobile(false);
               }}
             >
-              <span className="cursor-pointer rounded-md px-2 font-semibold text-lg hover:bg-muted">
+              <span className="cursor-pointer rounded-md px-2 font-semibold text-lg text-gradient-primary hover:bg-sidebar-accent/50 transition-all duration-200">
                 Chatbot
               </span>
             </Link>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  className="h-8 p-1 md:h-fit md:p-2"
+                  className="btn-ghost h-8 p-1 md:h-fit md:p-2 hover-scale focus-visible-enhanced"
                   onClick={() => {
                     setOpenMobile(false);
                     router.push("/");
@@ -52,17 +52,19 @@ export function AppSidebar({ user }: { user: User | undefined }) {
                   <PlusIcon />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent align="end" className="hidden md:block">
+              <TooltipContent align="end" className="tooltip-content hidden md:block">
                 New Chat
               </TooltipContent>
             </Tooltip>
           </div>
         </SidebarMenu>
       </SidebarHeader>
-      <SidebarContent>
+      <SidebarContent className="custom-scrollbar">
         <SidebarHistory user={user} />
       </SidebarContent>
-      <SidebarFooter>{user && <SidebarUserNav user={user} />}</SidebarFooter>
+      <SidebarFooter className="glass-effect border-t border-sidebar-border/30">
+        {user && <SidebarUserNav user={user} />}
+      </SidebarFooter>
     </Sidebar>
   );
 }

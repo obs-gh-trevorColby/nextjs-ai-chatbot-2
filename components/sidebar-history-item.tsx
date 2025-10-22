@@ -43,10 +43,10 @@ const PureChatItem = ({
   });
 
   return (
-    <SidebarMenuItem>
-      <SidebarMenuButton asChild isActive={isActive}>
-        <Link href={`/chat/${chat.id}`} onClick={() => setOpenMobile(false)}>
-          <span>{chat.title}</span>
+    <SidebarMenuItem className={`sidebar-item ${isActive ? 'active' : ''}`}>
+      <SidebarMenuButton asChild isActive={isActive} className="hover-lift focus-visible-enhanced">
+        <Link href={`/chat/${chat.id}`} onClick={() => setOpenMobile(false)} className="transition-all duration-200">
+          <span className="truncate">{chat.title}</span>
         </Link>
       </SidebarMenuButton>
 
