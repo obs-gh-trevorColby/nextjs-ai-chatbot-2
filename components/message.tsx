@@ -55,7 +55,7 @@ const PurePreviewMessage = ({
   return (
     <motion.div
       animate={{ opacity: 1 }}
-      className="message-bubble group/message w-full slide-up"
+      className="message-bubble hover-lift smooth-transition group/message w-full stagger-item"
       data-role={message.role}
       data-testid={`message-${message.role}`}
       initial={{ opacity: 0 }}

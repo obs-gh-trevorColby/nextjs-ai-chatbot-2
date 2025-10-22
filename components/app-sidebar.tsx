@@ -33,14 +33,14 @@ export function AppSidebar({ user }: { user: User | undefined }) {
                 setOpenMobile(false);
               }}
             >
-              <span className="text-gradient cursor-pointer rounded-md px-2 font-semibold text-lg hover:bg-muted interactive-element">
+              <span className="bg-gradient-primary bg-clip-text text-transparent cursor-pointer rounded-md px-2 font-semibold text-lg hover:bg-muted hover-scale smooth-transition">
                 Chatbot
               </span>
             </Link>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  className="btn-secondary h-8 p-1 md:h-fit md:p-2 interactive-element"
+                  className="btn-interactive hover-lift h-8 p-1 md:h-fit md:p-2"
                   onClick={() => {
                     setOpenMobile(false);
                     router.push("/");

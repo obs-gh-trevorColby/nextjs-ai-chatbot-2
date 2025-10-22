@@ -156,8 +156,8 @@ export function Chat({
 
   return (
     <>
-      <div className="chat-container overscroll-behavior-contain flex h-dvh min-w-0 touch-pan-y flex-col fade-in">
-        <div className="chat-header glass">
+      <div className="chat-container overscroll-behavior-contain flex h-dvh min-w-0 touch-pan-y flex-col page-transition">
+        <div className="chat-header glass slide-in-top">
           <ChatHeader
             chatId={id}
             isReadonly={isReadonly}
@@ -179,7 +179,7 @@ export function Chat({
           />
         </div>
 
-        <div className="chat-input-container glass-strong sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 px-2 pb-3 md:px-4 md:pb-4">
+        <div className="chat-input-container glass-strong slide-in-bottom sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 px-2 pb-3 md:px-4 md:pb-4">
           {!isReadonly && (
             <div className="w-full">
               <MultimodalInput

@@ -6,6 +6,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 import "./enhanced-ui.css";
 import "./theme-enhancements.css";
+import "./micro-interactions.css";
 import { SessionProvider } from "next-auth/react";
 
 export const metadata: Metadata = {
