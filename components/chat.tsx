@@ -1,6 +1,8 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
+
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import { DefaultChatTransport } from "ai";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -64,6 +66,42 @@ export function Chat({
   const [currentModelId, setCurrentModelId] = useState(initialChatModel);
   const currentModelIdRef = useRef(currentModelId);
 
+  // Client-side telemetry
+  const [_tracer, setTracer] = useState<any>(null);
+  const [logger, setLogger] = useState<any>(null);
+  const [_meter, setMeter] = useState<any>(null);
+
+  useEffect(() => {
+    // Initialize client-side telemetry
+    if (typeof window !== "undefined") {
+      import("../otel-client").then(
+        ({
+          tracer: clientTracer,
+          logger: clientLogger,
+          meter: clientMeter,
+        }) => {
+          setTracer(clientTracer);
+          setLogger(clientLogger);
+          setMeter(clientMeter);
+
+          // Log chat component initialization
+          clientLogger.emit({
+            severityNumber: SeverityNumber.INFO,
+            severityText: "INFO",
+            body: "Chat component initialized",
+            attributes: {
+              chatId: id,
+              model: initialChatModel,
+              visibility: initialVisibilityType,
+              isReadonly,
+              autoResume,
+            },
+          });
+        }
+      );
+    }
+  }, [id, initialChatModel, initialVisibilityType, isReadonly, autoResume]);
+
   useEffect(() => {
     currentModelIdRef.current = currentModelId;
   }, [currentModelId]);
@@ -104,8 +142,40 @@ export function Chat({
     },
     onFinish: () => {
       mutate(unstable_serialize(getChatHistoryPaginationKey));
+
+      // Log successful message completion
+      if (logger) {
+        logger.emit({
+          severityNumber: SeverityNumber.INFO,
+          severityText: "INFO",
+          body: "Chat message completed successfully",
+          attributes: {
+            chatId: id,
+            model: currentModelIdRef.current,
+            messageCount: messages.length + 1,
+          },
+        });
+      }
     },
     onError: (error) => {
+      // Log error
+      if (logger) {
+        logger.emit({
+          severityNumber: SeverityNumber.ERROR,
+          severityText: "ERROR",
+          body: "Chat message error",
+          attributes: {
+            chatId: id,
+            model: currentModelIdRef.current,
+            error: error.message,
+            errorType:
+              error instanceof ChatSDKError
+                ? "chat_sdk_error"
+                : "unknown_error",
+          },
+        });
+      }
+
       if (error instanceof ChatSDKError) {
         // Check if it's a credit card error
         if (
